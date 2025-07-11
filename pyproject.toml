@@ -1,0 +1,11 @@
+[tool.poetry]
+name = "polysynergy_node_runner"
+version = "0.1.0"
+description = "Base package for nodes and running node flows"
+authors = ["Dion Snoeijen"]
+
+[tool.poetry.dependencies]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
