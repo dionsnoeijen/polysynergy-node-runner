@@ -1,4 +1,4 @@
-from polysynergy_nodes.base.setup_context.dock_property import dock_property
+from polysynergy_node_runner.setup_context.dock_property import dock_property
 
 
 class NodeVariableSettings:

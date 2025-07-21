@@ -1,6 +1,6 @@
 import json
 
-from polysynergy_nodes.base.execution_context.replace_placeholders import replace_placeholders
+from polysynergy_node_runner.execution_context.replace_placeholders import replace_placeholders
 
 
 def test_simple_field_replacement():

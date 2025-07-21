@@ -1,0 +1,41 @@
+# Bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtualenvs
+venv/
+env/
+.venv/
+.python-version
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# SQLite database files (only if not per-project!)
+*.db
+*.sqlite3
+
+# Editor folders
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Logs and junk
+*.log
+*.bak
+*.swp
+*.tmp
+
+# Alembic / migration cache
+alembic/versions/*.pyc
+
+# Uvicorn reload artifacts
+reload.*.pid
+
+# Docker stuff
+__docker_build__/
+*.container_id

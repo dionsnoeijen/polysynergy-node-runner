@@ -1,8 +1,8 @@
 from typing import Any, get_origin, Union, get_args
 from dataclasses import dataclass
 
-from polysynergy_nodes.base.setup_context.node_variable_settings import NodeVariableSettings
-from polysynergy_nodes.base.setup_context.path_settings import PathSettings
+from polysynergy_node_runner.setup_context.node_variable_settings import NodeVariableSettings
+from polysynergy_node_runner.setup_context.path_settings import PathSettings
 
 
 @dataclass

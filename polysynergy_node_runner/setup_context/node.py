@@ -1,13 +1,13 @@
-import os
+import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from polysynergy_nodes.base.execution_context.execution_state import ExecutionState
-from polysynergy_nodes.base.execution_context.flow import Flow
-from polysynergy_nodes.base.execution_context.flow_state import FlowState
+from polysynergy_node_runner.execution_context.execution_state import ExecutionState
+from polysynergy_node_runner.execution_context.flow import Flow
+from polysynergy_node_runner.execution_context.flow_state import FlowState
 
-from polysynergy_nodes.base.setup_context.node_variable import NodeVariable
-from polysynergy_nodes.base.setup_context.node_variable_settings import NodeVariableSettings
+from polysynergy_node_runner.setup_context.node_variable import NodeVariable
+from polysynergy_node_runner.setup_context.node_variable_settings import NodeVariableSettings
 
 
 @dataclass
@@ -69,56 +69,42 @@ class Node:
         return variables
 
     def _get_code(self):
-        try:
-            module_path = self.path.split(".")[:-1]
-            relative_path = "/".join(module_path) + ".py"
+        file_path = self._get_declaring_file()
 
-            base_path = Path(__file__).resolve().parents[3]
-            file_path = os.path.join(base_path, relative_path)
+        # print(f"Resolving code for {self.path} in {file_path}")
 
-            if os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    return f.read()
-
-            return None
-
-        except Exception as e:
-            print(f"Can't load {self.name}: {e}")
-            return None
+        if file_path and file_path.exists():
+            return file_path.read_text(encoding="utf-8")
+        return None
 
     def _get_documentation(self):
-        try:
-            module_path = self.path.split(".")[:-2]
-            name_path = self.path.split(".")[-1]
-            relative_path = "/".join(module_path) + f"/{name_path}_README.md"
-
-            base_path = Path(__file__).resolve().parents[3]
-            file_path = os.path.join(base_path, relative_path)
-
-            if os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    return f.read()
-
-            return None
-
-        except Exception as e:
-            print(f"Can't load documentation for {self.name}: {e}")
-            return None
+        file_path = self._get_declaring_file()
+        if file_path:
+            doc_path = file_path.with_name(file_path.stem + "_README.md")
+            if doc_path.exists():
+                return doc_path.read_text(encoding="utf-8")
+        return None
 
     def _get_icon_content(self):
         if not self.icon:
             return ""
 
-        module_path = self.path.split(".")[:-2]
-        icon_path = "/".join(module_path) + f"/icons/{self.icon}"
-        base_path = Path(__file__).resolve().parents[3]
-        file_path = os.path.join(base_path, icon_path)
+        file_path = self._get_declaring_file()
+        if file_path:
+            icon_path = file_path.parent / "icons" / self.icon
+            if icon_path.exists():
+                return icon_path.read_text(encoding="utf-8")
 
+        return self.icon
+
+    def _get_declaring_file(self):
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception:
-            return self.icon
+            module_path = ".".join(self.path.split(".")[:-1])
+            module = importlib.import_module(module_path)
+            return Path(module.__file__)
+        except Exception as e:
+            print(f"Can't resolve file for {self.path}: {e}")
+            return None
 
     def to_dict(self):
         node_structure = {

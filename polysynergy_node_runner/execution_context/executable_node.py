@@ -3,16 +3,17 @@ import json
 import os
 import datetime
 
-from polysynergy_nodes.base.execution_context.active_listeners import ActiveListenersService
-from polysynergy_nodes.base.execution_context.connection import Connection
-from polysynergy_nodes.base.execution_context.execution_state import ExecutionState
-from polysynergy_nodes.base.execution_context.execution_storage import DynamoDbExecutionStorageService
-from polysynergy_nodes.base.execution_context.flow import Flow
-from polysynergy_nodes.base.execution_context.flow_state import FlowState
-from polysynergy_nodes.base.execution_context.send_flow_event import send_flow_event
-from polysynergy_nodes.base.execution_context.redact_secrets import redact
-from polysynergy_nodes.environment.services.env_var_manager import EnvVarManager
-from polysynergy_nodes.secret.services.secrets_manager import SecretsManager
+from polysynergy_node_runner.execution_context.active_listeners import ActiveListenersService
+from polysynergy_node_runner.execution_context.connection import Connection
+from polysynergy_node_runner.execution_context.execution_state import ExecutionState
+from polysynergy_node_runner.execution_context.flow import Flow
+from polysynergy_node_runner.execution_context.flow_state import FlowState
+from polysynergy_node_runner.execution_context.send_flow_event import send_flow_event
+from polysynergy_node_runner.execution_context.redact_secrets import redact
+from polysynergy_node_runner.services.env_var_manager import EnvVarManager
+from polysynergy_node_runner.services.execution_storage_service import DynamoDbExecutionStorageService
+from polysynergy_node_runner.services.secrets_manager import SecretsManager
+
 
 # TODO: Refactor - tightly coupled to DynamoDB + execution context, secrets and so on - violates node purity
 class ExecutableNode:
@@ -265,7 +266,7 @@ class ExecutableNode:
         return vars_dict
 
     def _apply_placeholder_replacements(self):
-        from polysynergy_nodes.base.execution_context.replace_placeholders import replace_placeholders
+        from polysynergy_node_runner.execution_context.replace_placeholders import replace_placeholders
 
         for attr_name in getattr(type(self), '__annotations__', {}):
             if attr_name.startswith("_"):

@@ -1,5 +1,5 @@
 from polysynergy_nodes import registered_nodes
-from polysynergy_nodes.base.execution_context.flow_state import FlowState
+from polysynergy_node_runner.execution_context.flow_state import FlowState
 
 
 def node(
