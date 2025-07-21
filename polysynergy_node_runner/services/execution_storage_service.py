@@ -1,8 +1,12 @@
 import json
 import os
+from datetime import datetime
 
 import boto3
 from boto3.dynamodb.conditions import Key
+
+from polysynergy_node_runner.execution_context.redact_secrets import redact
+from polysynergy_node_runner.execution_context.truncate_values import truncate_large_values
 
 
 class DynamoDbExecutionStorageService:
@@ -70,20 +74,34 @@ class DynamoDbExecutionStorageService:
         item = response.get("Item", {})
         return json.loads(item["data"]) if "data" in item else None
 
-    def store_node_result(
-        self,
+    def store_node_result(self,
+        node,
         flow_id: str,
         run_id: str,
-        node_id: str,
         order: int,
-        result: str,
         stage: str,
         sub_stage: str = 'mock'
     ):
+        result_data = {
+            "timestamp": datetime.now().isoformat(),
+            "variables": redact(
+                truncate_large_values(node.to_dict()),
+                {
+                    secret.get("value"): secret
+                    for secret in getattr(node.context, "secrets_map", {}).values()
+                    if secret.get("value")
+                }
+            ),
+            "error_type": type(node.get_exception()).__name__ if node.get_exception() else None,
+            "error": str(node.get_exception()) if node.get_exception() else None,
+            "killed": node.is_killed(),
+            "processed": node.is_processed(),
+        }
+
         self.table.put_item(Item={
             "PK": flow_id,
-            "SK": f"{run_id}#{node_id}#{order}#{stage}#{sub_stage}",
-            "data": result
+            "SK": f"{run_id}#{node.id}#{order}#{stage}#{sub_stage}",
+            "data": json.dumps(result_data, default=str),
         })
 
     def get_node_result(

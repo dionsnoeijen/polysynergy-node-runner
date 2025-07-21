@@ -43,3 +43,6 @@ class ExecutionState:
             else:
                 return f"<non-dict access on: {key}>"
         return value
+
+def get_execution_state():
+    return ExecutionState()

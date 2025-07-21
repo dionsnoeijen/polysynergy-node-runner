@@ -8,6 +8,7 @@ authors = ["Dion Snoeijen"]
 python = "^3.12"
 boto3 = "^1.39.6"
 pubnub = "^10.4.0"
+redis = "^6.2.0"
 
 [build-system]
 requires = ["poetry-core"]
