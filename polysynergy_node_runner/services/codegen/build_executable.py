@@ -15,19 +15,27 @@ import uuid
 import asyncio
 from typing import get_origin, get_args
 
-from polysynergy_node_runner.execution_context.active_listeners import ActiveListenersService
 from polysynergy_node_runner.execution_context.connection import Connection
+from polysynergy_node_runner.execution_context.connection_context import ConnectionContext
+from polysynergy_node_runner.execution_context.context import Context
 from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
 from polysynergy_node_runner.execution_context.execution_state import ExecutionState
 from polysynergy_node_runner.execution_context.flow import Flow
 from polysynergy_node_runner.execution_context.flow_state import FlowState
+from polysynergy_node_runner.execution_context.utils.connections import get_driving_connections, get_in_connections, \
+    get_out_connections
+from polysynergy_node_runner.services.active_listeners_service import get_active_listeners_service, \
+    ActiveListenersService
+from polysynergy_node_runner.services.env_var_manager import get_env_var_manager
 from polysynergy_node_runner.services.execution_storage_service import DynamoDbExecutionStorageService, get_execution_storage_service
 from polysynergy_node_runner.execution_context.send_flow_event import send_flow_event
+from polysynergy_node_runner.services.secrets_manager import get_secrets_manager
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 storage: DynamoDbExecutionStorageService = get_execution_storage_service()
+active_listeners_service: ActiveListenersService = get_active_listeners_service()
 """
 
 CONNECTIONS = """
@@ -77,32 +85,52 @@ def generate_code_from_json(json_data, id):
 
     rewrite_connections_for_groups(conns_data)
 
-    code_parts.append(
-        "def create_execution_environment(mock = False, run_id:str = \"\", stage:str=None, sub_stage:str=None):\n")
-    code_parts.append("    storage.clear_previous_execution(NODE_SETUP_VERSION_ID)")
-    code_parts.append(
-        "    execution_flow = { \"run_id\": run_id, \"nodes_order\": [], \"connections\": [], \"execution_data\": []}")
-    code_parts.append("    state = ExecutionState()")
-    code_parts.append("    flow = Flow([], state, execution_flow, NODE_SETUP_VERSION_ID, run_id)")
-    code_parts.append("    connections = []")
-    code_parts.append(build_connections_code(conns_data, nodes_data, groups_with_output))
-    code_parts.append("    flow.connections = connections")
-    code_parts.append(build_nodes_code(nodes_data, groups_with_output))
-    code_parts.append("    return flow, execution_flow, state")
+    code_parts.append("""\ndef create_execution_environment(mock = False, run_id:str = \"\", stage:str=None, sub_stage:str=None):
+        storage.clear_previous_execution(NODE_SETUP_VERSION_ID)
 
+        execution_flow = { "run_id": run_id, "nodes_order": [], "connections": [], "execution_data": []}
+
+        state = ExecutionState()
+        flow = Flow()
+
+        node_context = Context(
+            run_id=run_id,
+            node_setup_version_id=NODE_SETUP_VERSION_ID,
+            state=state,
+            flow=flow,
+            storage=storage,
+            active_listeners=active_listeners_service,
+            secrets_manager=get_secrets_manager(),
+            env_var_manager=get_env_var_manager(),
+            stage=stage if stage else "mock",
+            sub_stage=sub_stage if sub_stage else "mock",
+            execution_flow=execution_flow
+        )
+
+        connection_context = ConnectionContext(
+            state=state
+        )
+
+        connections = []
+        """)
+    code_parts.append(build_connections_code(conns_data, nodes_data, groups_with_output))
+    code_parts.append("        state.connections = connections")
+    code_parts.append(build_nodes_code(nodes_data, groups_with_output))
+    code_parts.append("        return flow, execution_flow, state")
     code_parts.append("""\nasync def execute_with_mock_start_node(node_id:str, run_id:str, sub_stage:str):
 
     flow, execution_flow, state = create_execution_environment(True, run_id=run_id, stage="mock", sub_stage=sub_stage)
 
     node_id = str(node_id)
-    if node_id not in flow.nodes:
+    node = state.get_node_by_id(str(node_id))
+    if node is None:
         raise ValueError(f"Node ID {node_id} not found.")
 
-    await flow.execute_node(flow.nodes[node_id])
+    await flow.execute_node(node)
     storage.store_connections_result(
         flow_id=NODE_SETUP_VERSION_ID,
         run_id=run_id,
-        connections=[c.to_dict() for c in flow.connections],
+        connections=[c.to_dict() for c in state.connections],
     )
 
     return execution_flow
@@ -111,7 +139,7 @@ def generate_code_from_json(json_data, id):
 async def execute_with_production_start(event=None, run_id:str=None, stage:str=None):
     flow, execution_flow, state = create_execution_environment(run_id=run_id, stage=stage)
 
-    entry_nodes = [n for n in flow.nodes.values() if n.path in ['polysynergy_nodes.route.route.Route', 'polysynergy_nodes.schedule.schedule.Schedule']]
+    entry_nodes = [n for n in state.nodes if n.path in ['polysynergy_nodes.route.route.Route', 'polysynergy_nodes.schedule.schedule.Schedule']]
 
     if not entry_nodes:
         raise ValueError("No valid entry node found (expected 'route' or 'schedule').")
@@ -126,13 +154,12 @@ async def execute_with_production_start(event=None, run_id:str=None, stage:str=N
                 node.cookies = event.get("cookies", {})
                 node.route_variables = event.get("pathParameters", {})
 
-    for node in entry_nodes:
-        await flow.execute_node(node)
+    await flow.execute_node(entry_nodes[0])
 
     storage.store_connections_result(
         flow_id=NODE_SETUP_VERSION_ID,
         run_id=run_id,
-        connections=[c.to_dict() for c in flow.connections],
+        connections=[c.to_dict() for c in state.connections],
     )
 
     return execution_flow, flow""")
@@ -153,7 +180,7 @@ def lambda_handler(event, context):
         is_ui_mock = stage == "mock" and node_id is not None
         if is_ui_mock:
             print("Running in mock mode with node_id:", node_id)
-            has_listener = ActiveListenersService().has_listener(NODE_SETUP_VERSION_ID)
+            has_listener = active_listeners_service.has_listener(NODE_SETUP_VERSION_ID)
             print("Has listener:", has_listener, NODE_SETUP_VERSION_ID)
             if has_listener:
                 send_flow_event(
@@ -175,7 +202,7 @@ def lambda_handler(event, context):
                 "body": json.dumps(execution_flow)
             }
         else:
-            # This is a production run triggered from the API Gateway.
+            # This is a production run triggered from the Router.
             # then this could still be a mock run. Imagine testing it with some
             # front-end or other application. We need to check the lambda name itself
             # to determine if that is true. We do want do run a production_start
@@ -187,7 +214,7 @@ def lambda_handler(event, context):
 
             has_listener = False
             if is_test_run:
-                has_listener = ActiveListenersService().has_listener(NODE_SETUP_VERSION_ID)
+                has_listener = active_listeners_service.has_listener(NODE_SETUP_VERSION_ID)
 
                 if has_listener:
                     send_flow_event(

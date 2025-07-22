@@ -42,6 +42,9 @@ class Node:
     def find_nodes_for_jump(self):
         return
 
+    def get_driving_connections(self) -> list:
+        return []
+
     def set_in_loop(self, loop: str | None):
         return
 

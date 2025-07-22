@@ -83,7 +83,15 @@ class EnvVarManager:
         )
 
 def get_env_var_manager():
-    return EnvVarManager()
+    region = os.getenv("AWS_REGION") or "eu-central-1"
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+    return EnvVarManager(
+        region=region,
+        access_key=access_key,
+        secret_key=secret_key
+    )
 
 def get_env_var_manager_from_env(access_key: str, secret_key: str, region: str):
     return EnvVarManager(

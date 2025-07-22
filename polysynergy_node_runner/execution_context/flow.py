@@ -1,22 +1,15 @@
 from __future__ import annotations
+from typing import TYPE_CHECKING
 
-from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
-
+if TYPE_CHECKING:
+    from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
 
 class Flow:
-    def __init__(
-        self,
-        state,
-        execution_flow,
-        node_setup_version_id,
-        run_id,
-    ):
-        self.state = state
-        self.execution_flow = execution_flow
-        self.node_setup_version_id = node_setup_version_id
-        self.run_id = run_id
 
     async def execute_node(self, node):
+
+        print("EXECUTING", node.__class__.__name__)
+
         if node.is_blocking():
             print('Is blocking:', node.id, node.handle, node.__class__.__name__)
             return
@@ -27,13 +20,13 @@ class Flow:
 
         if not node.is_killed() and self.should_kill_node(node):
             print('Killing node:', node.handle, node.__class__.__name__)
-            node.kill(self.execution_flow)
+            node.kill()
             return
 
         if node.is_processed() or node.is_killed():
             return
 
-        if (node.is_driven() or node.has_in_connections()) and not self.all_connections_processed(node.id):
+        if (node.is_driven() or node.has_in_connections()) and not self.all_connections_processed(node):
             await self.traverse_backward(node)
 
         if not node.is_processed() and not node.is_killed():
@@ -44,8 +37,7 @@ class Flow:
                 node.apply_from_incoming_connection(conn)
 
             print('Executing:', node.id, node.handle, node.__class__.__name__)
-            node.run_id = self.run_id
-            await node.state_execute(self.execution_flow)
+            await node.state_execute()
 
         await self.traverse_forward(node)
 
@@ -88,7 +80,7 @@ class Flow:
                 target_node.add_found_by(conn.uuid)
                 if self.should_kill_node(target_node):
                     print('Killing node:', target_node.handle, target_node.__class__.__name__)
-                    target_node.kill(self.execution_flow)
+                    target_node.kill()
                     continue
                 if node.is_in_loop():
                     target_node.set_in_loop(node.is_in_loop())

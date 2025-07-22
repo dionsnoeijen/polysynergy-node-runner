@@ -5,8 +5,8 @@ from datetime import datetime
 import boto3
 from boto3.dynamodb.conditions import Key
 
-from polysynergy_node_runner.execution_context.redact_secrets import redact
-from polysynergy_node_runner.execution_context.truncate_values import truncate_large_values
+from polysynergy_node_runner.execution_context.utils.redact_secrets import redact
+from polysynergy_node_runner.execution_context.utils.truncate_values import truncate_large_values
 
 
 class DynamoDbExecutionStorageService:
@@ -127,7 +127,16 @@ class DynamoDbExecutionStorageService:
 def get_execution_storage_service(
     table_name: str = "execution_storage"
 ) -> DynamoDbExecutionStorageService:
-    return DynamoDbExecutionStorageService(table_name=table_name)
+    region = os.getenv("AWS_REGION") or "eu-central-1"
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+    return DynamoDbExecutionStorageService(
+        table_name=table_name,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region
+    )
 
 def get_execution_storage_service_from_env(
     access_key: str,

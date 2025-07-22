@@ -1,6 +1,6 @@
 from polysynergy_node_runner.execution_context.flow_state import FlowState
 
-from services.codegen.steps.get_version_suffix import get_version_suffix
+from polysynergy_node_runner.services.codegen.steps.get_version_suffix import get_version_suffix
 
 
 def build_nodes_code(nodes: list, groups_with_output: set):
@@ -25,16 +25,16 @@ def build_nodes_code(nodes: list, groups_with_output: set):
                     version_suffix = get_version_suffix(version)
                     class_name = f"{base_class_name}{version_suffix}"
 
-        var_name = "        node_" + nd["id"].replace("-", "_")
-        factory_method_name = "make_" + var_name.strip() + "_instance(state, flow)"
-        lines.append(f"\n    def {factory_method_name}:")
+        var_name = "            node_" + nd["id"].replace("-", "_")
+        factory_method_name = "make_" + var_name.strip() + "_instance(node_context)"
+        lines.append(f"\n        def {factory_method_name}:")
 
         stateful = nd.get('stateful', True)
         lines.append(
-            f"{var_name} = {class_name}(state, flow, '{nd['id']}', '{nd['handle']}', node_setup_version_id=NODE_SETUP_VERSION_ID, stateful={stateful}, storage=storage, stage=stage, sub_stage=sub_stage)")
+            f"{var_name} = {class_name}(id='{nd['id']}', handle='{nd['handle']}', stateful={stateful}, context=node_context)")
 
-        lines.append(f"        def factory():")
-        lines.append(f"            return {factory_method_name}")
+        lines.append(f"            def factory():")
+        lines.append(f"                return {factory_method_name}")
 
         lines.append(f"{var_name}.factory = factory")
 
@@ -81,13 +81,13 @@ def build_nodes_code(nodes: list, groups_with_output: set):
             else:
                 lines.append(f"{var_name}.{handle} = {val_repr}")
 
-        lines.append(f"{var_name}.set_driving_connections(flow.get_driving_connections('{nd['id']}'))")
-        lines.append(f"{var_name}.set_in_connections(flow.get_in_connections('{nd['id']}'))")
-        lines.append(f"{var_name}.set_out_connections(flow.get_out_connections('{nd['id']}'))")
-        lines.append(f"        return {var_name.strip()}")
+        lines.append(f"{var_name}.set_driving_connections(get_driving_connections(connections, '{nd['id']}'))")
+        lines.append(f"{var_name}.set_in_connections(get_in_connections(connections, '{nd['id']}'))")
+        lines.append(f"{var_name}.set_out_connections(get_out_connections(connections, '{nd['id']}'))")
+        lines.append(f"            return {var_name.strip()}")
 
         lines.append(
-            f"\n    if mock or '{nd['category']}' != 'mock': flow.register_node(make_{var_name.strip()}_instance(state, flow))")
+            f"\n        if mock or '{nd['category']}' != 'mock': state.register_node(make_{var_name.strip()}_instance(node_context))")
         lines.append(f"\n")
 
     return "\n".join(lines)

@@ -1,10 +1,10 @@
 import re
 
-from services.codegen.steps.filter_and_collect_imports import filter_and_collect_imports
-from services.codegen.steps.get_version_suffix import get_version_suffix
-from services.codegen.steps.replace_node_to_executable import replace_node_to_executable
-from services.codegen.steps.strip_multiline_decorator import strip_multiline_decorator
-from services.codegen.steps.strip_nodevariable_all import strip_nodevariable_all
+from polysynergy_node_runner.services.codegen.steps.filter_and_collect_imports import filter_and_collect_imports
+from polysynergy_node_runner.services.codegen.steps.get_version_suffix import get_version_suffix
+from polysynergy_node_runner.services.codegen.steps.replace_node_to_executable import replace_node_to_executable
+from polysynergy_node_runner.services.codegen.steps.strip_multiline_decorator import strip_multiline_decorator
+from polysynergy_node_runner.services.codegen.steps.strip_nodevariable_all import strip_nodevariable_all
 
 
 def unify_node_code(code, collected_imports, version=None):

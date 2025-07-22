@@ -21,6 +21,7 @@ class Context:
         env_var_manager: EnvVarManager,
         stage: str = 'mock',
         sub_stage: str = 'mock',
+        execution_flow: dict[str, any] = None,
     ):
         self.run_id = run_id
         self.node_setup_version_id = node_setup_version_id
@@ -32,6 +33,7 @@ class Context:
         self.env_vars = env_var_manager
         self.stage = stage
         self.sub_stage = sub_stage
+        self.execution_flow = execution_flow or {}
 
         # For secret resolution, the original values are stored,
         # so they can be placed back after execution

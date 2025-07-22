@@ -13,9 +13,9 @@ def find_groups_with_output(conns_data):
         # - én de sourceNodeId is NIET gelijk aan de sourceGroupId (dus niet een dummy buitenste verbinding)
 
         if (
-                source_group
-                and source_group != target_group
-                and source_node != source_group
+            source_group
+            and source_group != target_group
+            and source_node != source_group
         ):
             groups_with_output.add(source_group)
 

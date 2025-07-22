@@ -124,7 +124,15 @@ class SecretsManager:
             raise e
 
 def get_secrets_manager() -> SecretsManager:
-    return SecretsManager()
+    region = os.getenv("AWS_REGION") or "eu-central-1"
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+    return SecretsManager(
+        region=region,
+        access_key=access_key,
+        secret_key=secret_key
+    )
 
 def get_secrets_manager_from_env(access_key: str, secret_key: str, region: str) -> SecretsManager:
     return SecretsManager(

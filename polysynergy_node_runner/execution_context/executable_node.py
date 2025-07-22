@@ -36,6 +36,12 @@ class ExecutableNode(
         self.context = context
         self.factory: callable = None
 
+        # So the nodes can access the current flow and state
+        # from the setup context, without having to know about
+        # the "execution" context
+        self.state = self.context.state
+        self.flow = self.context.flow
+
         self.id: str = id
         self.handle: str = handle
 

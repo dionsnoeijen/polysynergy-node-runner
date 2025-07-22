@@ -1,14 +1,15 @@
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
-from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
+if TYPE_CHECKING:
+    from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
 
 
 def find_nodes_until(
-    start_node: ExecutableNode,
-    match_end_node_fn: Callable[[ExecutableNode], bool],
-    get_node_by_id: Callable[[str], ExecutableNode],
-    skip_node_fn: Callable[[ExecutableNode], bool] = None,
-    post_process_fn: Callable[[ExecutableNode], None] = None
+    start_node: "ExecutableNode",
+    match_end_node_fn: Callable[["ExecutableNode"], bool],
+    get_node_by_id: Callable[[str], "ExecutableNode"],
+    skip_node_fn: Callable[["ExecutableNode"], bool] = None,
+    post_process_fn: Callable[["ExecutableNode"], None] = None
 ):
     visited = set()
     collected_nodes = []
@@ -20,7 +21,7 @@ def find_nodes_until(
             return
         visited.add(node.id)
 
-        for connection in node.out_connections:
+        for connection in node.get_out_connections():
             target_node = get_node_by_id(connection.target_node_id)
             if target_node is None:
                 continue

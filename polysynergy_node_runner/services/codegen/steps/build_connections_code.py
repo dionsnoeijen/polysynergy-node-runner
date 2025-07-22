@@ -15,12 +15,12 @@ def build_connections_code(connections, nodes, groups_with_output: set):
         if source_category == 'group' and c["sourceNodeId"] not in groups_with_output:
             continue
 
-        condition = f"mock or '{source_category}' != 'mock'"  # Connection condition in gegenereerde code
+        condition = f"mock or '{source_category}' != 'mock'"
 
         lines.append(
-            f"    if {condition}: connections.append(Connection(uuid='{c['id']}', "
+            f"        if {condition}: connections.append(Connection(uuid='{c['id']}', "
             f"source_node_id='{c['sourceNodeId']}', source_handle='{c['sourceHandle']}', "
-            f"target_node_id='{c['targetNodeId']}', target_handle='{c['targetHandle']}'))"
+            f"target_node_id='{c['targetNodeId']}', target_handle='{c['targetHandle']}', context=connection_context))"
         )
 
     return "\n".join(lines)

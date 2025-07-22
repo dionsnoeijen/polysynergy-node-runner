@@ -2,10 +2,13 @@ class ExecutionState:
     def __init__(self):
         self.nodes_by_id = {}
         self.nodes_by_handle = {}
+        self.nodes: list = []
+        self.connections: list = []
 
     def register_node(self, node):
         self.nodes_by_id[node.id] = node
         self.nodes_by_handle[node.handle] = node
+        self.nodes.append(node)
 
     def get_node_by_id(self, node_id):
         return self.nodes_by_id.get(node_id)
