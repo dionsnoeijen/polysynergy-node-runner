@@ -1,30 +1,22 @@
-import logging
 import os
+import json
 import threading
-from pubnub.pnconfiguration import PNConfiguration
-from pubnub.pubnub import PubNub
+import logging
+import redis
 
 logger = logging.getLogger(__name__)
 
-pubnub = None
-pnconfig = None
+_redis = None
 
-def init_pubnub():
-    global pubnub, pnconfig
-    if pubnub:
-        return
-
-    pnconfig = PNConfiguration()
-    pnconfig.publish_key = os.getenv('PUBNUB_PUBLISH_KEY', 'your-publish-key')
-    pnconfig.subscribe_key = os.getenv('PUBNUB_SUBSCRIBE_KEY', 'your-subscribe-key')
-    pnconfig.secret_key = os.getenv('PUBNUB_SECRET_KEY', 'your-secret-key')
-    pnconfig.user_id = os.getenv('USER_ID', 'poly_synergy_flow')
-
-    pnconfig.connect_timeout = 2
-    pnconfig.request_timeout = 2
-
-    pubnub = PubNub(pnconfig)
-
+def get_redis():
+    global _redis
+    if _redis is None:
+        _redis = redis.Redis(
+            host=os.getenv("REDIS_HOST", "redis"),
+            port=int(os.getenv("REDIS_PORT", 6379)),
+            db=0
+        )
+    return _redis
 
 def send_flow_event(
     flow_id: str,
@@ -34,8 +26,6 @@ def send_flow_event(
     order: int = -1,
     status='running'
 ):
-    init_pubnub()
-
     message = {
         'flow_id': flow_id,
         'run_id': run_id,
@@ -45,15 +35,12 @@ def send_flow_event(
         'status': status,
     }
 
-    if not pnconfig.publish_key or pnconfig.publish_key == 'your-publish-key':
-        logger.error("PUBNUB_PUBLISH_KEY is missing or default value")
-    if not pnconfig.subscribe_key or pnconfig.subscribe_key == 'your-subscribe-key':
-        logger.error("PUBNUB_SUBSCRIBE_KEY is missing or default value")
-
     def fire():
         try:
-            pubnub.publish().channel(f'flow-{flow_id}').message(message).sync()
+            redis_conn = get_redis()
+            print('[Redis] Publishing message:', message)
+            redis_conn.publish(f"execution_updates:{flow_id}", json.dumps(message))
         except Exception as e:
-            logger.info(f"[PubNub] publish failed (ignored): {e}")
+            logger.warning(f"[Redis] publish failed (ignored): {e}")
 
     threading.Thread(target=fire).start()
