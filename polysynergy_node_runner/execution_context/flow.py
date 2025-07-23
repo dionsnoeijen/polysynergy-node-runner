@@ -7,9 +7,6 @@ if TYPE_CHECKING:
 class Flow:
 
     async def execute_node(self, node):
-
-        print("EXECUTING", node.__class__.__name__)
-
         if node.is_blocking():
             print('Is blocking:', node.id, node.handle, node.__class__.__name__)
             return

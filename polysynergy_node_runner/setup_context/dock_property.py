@@ -10,6 +10,7 @@ def dock_property(
     switch: bool = False,
     info: str = "",
     metadata: dict | None = None,
+    placeholder: str | None = None,
 ):
     return {
         "has_dock": True,
@@ -24,6 +25,7 @@ def dock_property(
         "switch": switch,
         "info": info,
         "metadata": metadata or {},
+        "placeholder": placeholder,
     }
 
 def dock_code_editor(enabled: bool = True, info: str = ""):
