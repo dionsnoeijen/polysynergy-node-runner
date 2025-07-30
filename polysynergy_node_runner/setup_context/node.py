@@ -2,6 +2,7 @@ import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from polysynergy_node_runner.execution_context.context import Context
 from polysynergy_node_runner.execution_context.execution_state import ExecutionState
 from polysynergy_node_runner.execution_context.flow import Flow
 from polysynergy_node_runner.execution_context.flow_state import FlowState
@@ -13,6 +14,7 @@ from polysynergy_node_runner.setup_context.node_variable_settings import NodeVar
 @dataclass
 class Node:
     id: str = ''
+    context: Context = None
     state: ExecutionState = None
     flow: Flow = None
 
@@ -41,6 +43,12 @@ class Node:
 
     def find_nodes_for_jump(self):
         return
+
+    def get_in_connections(self) -> list:
+        return []
+
+    def get_out_connections(self) -> list:
+        return []
 
     def get_driving_connections(self) -> list:
         return []

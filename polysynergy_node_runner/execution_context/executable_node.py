@@ -3,7 +3,6 @@ from polysynergy_node_runner.execution_context.flow_state import FlowState
 from polysynergy_node_runner.execution_context.mixins.apply_from_connection_mixin import ApplyFromConnectionMixin
 from polysynergy_node_runner.execution_context.mixins.connection_logic_mixin import ConnectionLogicMixin
 from polysynergy_node_runner.execution_context.mixins.flow_execution_mixin import FlowExecutionMixin
-from polysynergy_node_runner.execution_context.mixins.placeholder_replacement_mixin import PlaceholderReplacementMixin
 from polysynergy_node_runner.execution_context.mixins.resolve_environment_variable_mixin import \
     ResolveEnvironmentVariableMixin
 from polysynergy_node_runner.execution_context.mixins.resolve_secret_mixin import ResolveSecretMixin
@@ -15,7 +14,6 @@ from polysynergy_node_runner.execution_context.utils.make_serializable import ma
 class ExecutableNode(
     ConnectionLogicMixin,
     StateLifecycleMixin,
-    PlaceholderReplacementMixin,
     ResolveEnvironmentVariableMixin,
     ResolveSecretMixin,
     FlowExecutionMixin,

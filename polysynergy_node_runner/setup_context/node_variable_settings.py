@@ -19,6 +19,7 @@ class NodeVariableSettings:
         info: str | None=None,
         group: str | None = None,
         metadata: dict | None = None,
+        type: str | None = None,
     ):
         self.label = label
         self.default = default
@@ -37,6 +38,7 @@ class NodeVariableSettings:
         self.info = info
         self.group = group
         self.metadata = metadata or {}
+        self.type = type
 
     def __set_name__(self, owner, name):
         self.private_name = "_" + name
@@ -59,6 +61,7 @@ class NodeVariableSettings:
             "info": self.info,
             "group": self.group,
             "metadata": self.metadata,
+            "type": self.type,
         }
 
     def __get__(self, obj, objtype=None):

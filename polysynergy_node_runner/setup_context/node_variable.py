@@ -48,7 +48,7 @@ class NodeVariable:
             name=name.replace('_', ' ').title(),
             handle=name,
             value=value,
-            type=variable_type_str,
+            type=attr.type or variable_type_str,
             has_dock=bool(attr.dock),
             published=attr.published,
             published_title=attr.published_title,
@@ -61,7 +61,7 @@ class NodeVariable:
             node=attr.node,
             info=attr.info,
             group=attr.group,
-            metadata=attr.metadata or {}
+            metadata=attr.metadata or {},
         )
 
     from typing import Any, get_origin, get_args, Union

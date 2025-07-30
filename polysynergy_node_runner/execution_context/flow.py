@@ -47,9 +47,9 @@ class Flow:
 
             print(
                 'Traversing backward:',
-                node.handle, node.__class__.__name__,
-                '<-',
                 source_node.handle, source_node.__class__.__name__,
+                '->',
+                node.handle, node.__class__.__name__,
             )
 
             if conn.is_killer() or node.was_found_by(conn.uuid):
