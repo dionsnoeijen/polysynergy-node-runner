@@ -9,14 +9,15 @@ logger = logging.getLogger(__name__)
 _redis = None
 
 def get_redis():
-    redis_url = os.getenv('REDIS_URL', 'redis://redis:6379/0')
+    redis_url = os.getenv('REDIS_URL', 'redis://redis:6379')
     if not redis_url:
         raise ValueError("REDIS_URL environment variable is not set")
     global _redis
     if _redis is None:
         _redis = redis.from_url(
             redis_url,
-            decode_responses=True
+            decode_responses=True,
+            db=0
         )
     return _redis
 
