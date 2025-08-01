@@ -38,12 +38,8 @@ def send_flow_event(
         'status': status,
     }
 
-    def fire():
-        try:
-            redis_conn = get_redis()
-            print('[Redis] Publishing message:', message)
-            redis_conn.publish(f"execution_updates:{flow_id}", json.dumps(message))
-        except Exception as e:
-            logger.warning(f"[Redis] publish failed (ignored): {e}")
-
-    threading.Thread(target=fire).start()
+    try:
+        redis_conn = get_redis()
+        redis_conn.publish(f"execution_updates:{flow_id}", json.dumps(message))
+    except Exception as e:
+        logger.warning(f"[Redis] publish failed (ignored): {e}")
