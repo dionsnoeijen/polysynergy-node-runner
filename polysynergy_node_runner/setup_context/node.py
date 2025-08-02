@@ -1,6 +1,4 @@
-import importlib
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from polysynergy_node_runner.execution_context.context import Context
 from polysynergy_node_runner.execution_context.execution_state import ExecutionState
@@ -8,7 +6,9 @@ from polysynergy_node_runner.execution_context.flow import Flow
 from polysynergy_node_runner.execution_context.flow_state import FlowState
 
 from polysynergy_node_runner.setup_context.node_variable import NodeVariable
-from polysynergy_node_runner.setup_context.node_variable_settings import NodeVariableSettings
+from polysynergy_node_runner.setup_context.file_resolver import FileResolver
+from polysynergy_node_runner.setup_context.variable_manager import VariableManager
+from polysynergy_node_runner.setup_context.connection_manager import ConnectionManager
 
 
 @dataclass
@@ -31,91 +31,59 @@ class Node:
     flow_state: FlowState = field(init=False, default=FlowState.ENABLED)
     version: float = field(init=False, default=1.0)
     metadata: dict = field(init=False, default_factory=dict)
+    
+    # Managers for composition
+    _file_resolver: FileResolver = field(init=False, default=None)
+    _variable_manager: VariableManager = field(init=False, default=None)
+    _connection_manager: ConnectionManager = field(init=False, default=None)
 
     def resurrect(self):
-        return
+        return self._connection_manager.resurrect()
 
     def _find_nodes_until(self, match_end_node_fn, skip_node_fn=None, post_process_fn=None):
-        return
+        return self._connection_manager.find_nodes_until(match_end_node_fn, skip_node_fn, post_process_fn)
 
     def find_nodes_in_loop(self):
-        return
+        return self._connection_manager.find_nodes_in_loop()
 
     def find_nodes_for_jump(self):
-        return
+        return self._connection_manager.find_nodes_for_jump()
 
     def get_in_connections(self) -> list:
-        return []
+        return self._connection_manager.get_in_connections()
 
     def get_out_connections(self) -> list:
-        return []
+        return self._connection_manager.get_out_connections()
 
     def get_driving_connections(self) -> list:
-        return []
+        return self._connection_manager.get_driving_connections()
 
     def set_in_loop(self, loop: str | None):
-        return
+        return self._connection_manager.set_in_loop(loop)
 
     def is_in_loop(self):
-        return False
+        return self._connection_manager.is_in_loop()
 
     def __post_init__(self):
-        self.variables = self._generate_node_variables()
-
-    def _generate_node_variables(self) -> list[NodeVariable]:
-        variables = []
-        for name, attr in vars(type(self)).items():
-            if isinstance(attr, NodeVariableSettings):
-                try:
-                    variables.append(NodeVariable.create_from_property(self, name, attr))
-                except AttributeError:
-                    print(f"Property '{name}' can not be retrieved {self.__class__.__name__}")
-
-        for path_attr in ["true_path", "false_path"]:
-            if hasattr(self, path_attr):
-                path_variable = NodeVariable.add_path_variable(self, path_attr)
-                if path_variable:
-                    variables.append(path_variable)
-
-        return variables
+        # Initialize managers
+        self._file_resolver = FileResolver(self)
+        self._variable_manager = VariableManager(self)
+        self._connection_manager = ConnectionManager(self)
+        
+        # Generate variables using the manager
+        self.variables = self._variable_manager.generate_node_variables()
 
     def _get_code(self):
-        file_path = self._get_declaring_file()
-
-        # print(f"Resolving code for {self.path} in {file_path}")
-
-        if file_path and file_path.exists():
-            return file_path.read_text(encoding="utf-8")
-        return None
+        return self._file_resolver.get_code()
 
     def _get_documentation(self):
-        file_path = self._get_declaring_file()
-        if file_path:
-            doc_path = file_path.with_name(file_path.stem + "_README.md")
-            if doc_path.exists():
-                return doc_path.read_text(encoding="utf-8")
-        return None
+        return self._file_resolver.get_documentation()
 
     def _get_icon_content(self):
-        if not self.icon:
-            return ""
-
-        file_path = self._get_declaring_file()
-        if file_path:
-            icon_path = file_path.parent / "icons" / self.icon
-            if icon_path.exists():
-                return icon_path.read_text(encoding="utf-8")
-
-        return self.icon
+        return self._file_resolver.get_icon_content()
 
     def _get_declaring_file(self):
-        try:
-            module_path = ".".join(self.path.split(".")[:-1])
-            module = importlib.import_module(module_path)
-            return Path(module.__file__)
-        except Exception as e:
-            print(f"Can't resolve file for {self.path}: {e}")
-            return None
+        return self._file_resolver.get_declaring_file()
 
     def to_dict(self):
         node_structure = {
