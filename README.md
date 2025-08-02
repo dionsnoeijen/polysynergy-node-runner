@@ -1,10 +1,10 @@
-# Polysynergy Node Runner
+# PolySynergy Node Runner
 
 A Python framework for executing node-based workflows with support for AWS services, real-time messaging, and dynamic code generation.
 
 ## Overview
 
-The Polysynergy Node Runner is a sophisticated workflow execution engine that enables the creation and execution of complex, interconnected node-based processes. It features dynamic code generation, state management, and integration with cloud services.
+The PolySynergy Node Runner is a sophisticated workflow execution engine that enables the creation and execution of complex, interconnected node-based processes. It features dynamic code generation, state management, and integration with cloud services.
 
 ## Features
 
