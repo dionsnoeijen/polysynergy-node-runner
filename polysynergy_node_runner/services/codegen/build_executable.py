@@ -225,7 +225,7 @@ def lambda_handler(event, context):
                     )
 
 
-            execution_flow, flow = execute_with_production_start(event, run_id, stage)
+            execution_flow, flow = await execute_with_production_start(event, run_id, stage)
             print('request_id: ', context.aws_request_id)
 
             for node in execution_flow.get("nodes_order", []):
