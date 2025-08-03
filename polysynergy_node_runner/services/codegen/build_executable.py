@@ -162,7 +162,7 @@ async def execute_with_production_start(event=None, run_id:str=None, stage:str=N
         connections=[c.to_dict() for c in state.connections],
     )
 
-    return execution_flow, flow""")
+    return execution_flow, flow, state""")
 
     code_parts.append("""\nimport json
 
@@ -225,7 +225,27 @@ def lambda_handler(event, context):
                     )
 
 
-            execution_flow, flow = await execute_with_production_start(event, run_id, stage)
+            # Handle async execution properly for production
+            try:
+                # Check if we're already in an event loop
+                asyncio.get_running_loop()
+                # If we get here, we're in a running loop, run in a separate thread
+                import concurrent.futures
+                
+                def run_production_async():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        return loop.run_until_complete(execute_with_production_start(event, run_id, stage))
+                    finally:
+                        loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(run_production_async)
+                    execution_flow, flow, state = future.result()
+            except RuntimeError:
+                # No running loop, we can use asyncio.run
+                execution_flow, flow, state = asyncio.run(execute_with_production_start(event, run_id, stage))
             print('request_id: ', context.aws_request_id)
 
             for node in execution_flow.get("nodes_order", []):
@@ -239,7 +259,7 @@ def lambda_handler(event, context):
 
             if last_http_response:
                 variables = last_http_response.get("variables", {})
-                http_response_node = flow.get_node(last_http_response.get("id", ""))
+                http_response_node = state.get_node_by_id(last_http_response.get("id", ""))
                 response = {
                     "statusCode": http_response_node.response.get('status', 100),
                     "headers": http_response_node.response.get('headers', {}),
