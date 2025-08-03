@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="https://www.polysynergy.com/ps-color-logo-with-text.svg" alt="PolySynergy Logo" width="300">
+</div>
+
 # PolySynergy Node Runner
 
 A Python framework for executing node-based workflows with support for AWS services, real-time messaging, and dynamic code generation.
