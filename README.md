@@ -4,6 +4,8 @@
 
 # PolySynergy Node Runner
 
+> 🚀 **Get Started**: This is part of the [PolySynergy Orchestrator](https://github.com/dionsnoeijen/polysynergy-orchestrator) - a visual workflow automation platform. Start there to set up the complete system and begin building AI agent workflows.
+
 A Python framework for executing node-based workflows with support for AWS services, real-time messaging, and dynamic code generation.
 
 ## Overview
