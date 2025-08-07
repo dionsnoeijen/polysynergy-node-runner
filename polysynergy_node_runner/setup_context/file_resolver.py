@@ -39,7 +39,9 @@ class FileResolver:
         """Get documentation content from README file."""
         file_path = self.get_declaring_file()
         if file_path:
-            doc_path = file_path.with_name(file_path.stem + "_README.md")
+            # Use the class name for the README file, not the file stem
+            class_name = self.node.__class__.__name__
+            doc_path = file_path.with_name(class_name + "_README.md")
             if doc_path.exists():
                 # Let PermissionError propagate for tests that expect it
                 return doc_path.read_text(encoding="utf-8")
