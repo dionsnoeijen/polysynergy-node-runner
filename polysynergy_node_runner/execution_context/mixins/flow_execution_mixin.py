@@ -129,5 +129,5 @@ class FlowExecutionMixin:
                 node_id=self.id,
                 event_type='end_node',
                 order=order,
-                status=self.is_killed() and 'killed' or 'success',
+                status='killed' if self.is_killed() else 'error' if self.get_exception() else 'success',
             )
