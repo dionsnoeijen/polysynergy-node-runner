@@ -40,8 +40,6 @@ class ResolveSecretMixin:
                     continue
                 replaced = self._replace_secret_placeholders(data=val)
 
-                print("REPLACING SECRET:", attr_name, "with", replaced)
-
                 setattr(self, attr_name, replaced)
 
         if not self.__class__.__name__.startswith("VariableSecret"):

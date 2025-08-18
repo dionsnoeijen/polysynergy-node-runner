@@ -70,12 +70,27 @@ def generate_code_from_json(json_data, id):
             cleaned = unify_node_code(code, collected_imports, version)
             path_version_map[version_key] = cleaned
 
-    code_parts = [HEADER]
+    # Separate __future__ imports from other imports
+    future_imports = {imp for imp in collected_imports if imp.startswith("from __future__")}
+    other_imports = collected_imports - future_imports
+    
+    code_parts = []
+    
+    # Add shebang first (if no __future__ imports) or __future__ imports first
+    if future_imports:
+        code_parts.append("#!/usr/bin/env python3")
+        code_parts.append("\n".join(sorted(future_imports)))
+        # Add rest of header without shebang
+        code_parts.append(HEADER.replace("#!/usr/bin/env python3\n\n", ""))
+    else:
+        # Add the full header with shebang
+        code_parts.append(HEADER)
 
     code_parts.append(f"NODE_SETUP_VERSION_ID = \"{str(id)}\"")
 
-    if collected_imports:
-        code_parts.append("\n".join(sorted(collected_imports)))
+    # Add remaining imports
+    if other_imports:
+        code_parts.append("\n".join(sorted(other_imports)))
 
     for _, ctext in path_version_map.items():
         if ctext.strip():

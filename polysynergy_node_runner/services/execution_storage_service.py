@@ -253,28 +253,78 @@ class DynamoDbExecutionStorageService:
         return json.loads(item["data"]) if "data" in item else None
 
     def get_available_runs(self, flow_id: str) -> list[dict]:
-        """Get list of available runs for a flow with metadata"""
-        run_ids = self._get_all_run_ids(flow_id)
-        
-        # Sort runs by ID (which should be timestamp-based)
-        run_ids.sort(reverse=True)
-        
-        runs = []
-        for run_id in run_ids:
-            # Get some metadata for the run (e.g., first node execution timestamp)
-            run_info = {
-                "run_id": run_id,
-                "timestamp": run_id  # Assuming run_id contains timestamp info
-            }
+        """Get list of available runs for a flow with metadata - OPTIMIZED"""
+        # Use query instead of scan since we have the partition key - dramatically faster
+        try:
+            response = self.table.query(
+                KeyConditionExpression=Key("PK").eq(flow_id)
+            )
             
-            # Try to get the first node result to extract more metadata
-            first_node_result = self._get_first_node_result(flow_id, run_id)
-            if first_node_result and "timestamp" in first_node_result:
-                run_info["timestamp"] = first_node_result["timestamp"]
+            runs_metadata = {}
             
-            runs.append(run_info)
-        
-        return runs
+            # Process all items in one pass instead of multiple scans
+            for item in response.get('Items', []):
+                sk = item.get('SK', '')
+                if '#' in sk:
+                    parts = sk.split('#')
+                    run_id = parts[0]
+                    
+                    # Track run IDs and extract metadata
+                    if run_id not in runs_metadata:
+                        runs_metadata[run_id] = {
+                            "run_id": run_id,
+                            "timestamp": run_id  # Default fallback
+                        }
+                    
+                    # If this is a node result (not connections/mock_nodes), extract timestamp
+                    if (len(parts) >= 3 and 
+                        'connections' not in sk and 
+                        'mock_nodes' not in sk and 
+                        'data' in item):
+                        try:
+                            data = json.loads(item.get('data', '{}'))
+                            if 'timestamp' in data:
+                                runs_metadata[run_id]["timestamp"] = data["timestamp"]
+                        except (json.JSONDecodeError, KeyError):
+                            pass  # Keep default timestamp if parsing fails
+            
+            # Handle pagination efficiently
+            while 'LastEvaluatedKey' in response:
+                response = self.table.query(
+                    KeyConditionExpression=Key("PK").eq(flow_id),
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                for item in response.get('Items', []):
+                    sk = item.get('SK', '')
+                    if '#' in sk:
+                        parts = sk.split('#')
+                        run_id = parts[0]
+                        
+                        if run_id not in runs_metadata:
+                            runs_metadata[run_id] = {
+                                "run_id": run_id,
+                                "timestamp": run_id
+                            }
+                        
+                        if (len(parts) >= 3 and 
+                            'connections' not in sk and 
+                            'mock_nodes' not in sk and 
+                            'data' in item):
+                            try:
+                                data = json.loads(item.get('data', '{}'))
+                                if 'timestamp' in data:
+                                    runs_metadata[run_id]["timestamp"] = data["timestamp"]
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+            
+            # Sort and return
+            runs = list(runs_metadata.values())
+            runs.sort(key=lambda x: x["timestamp"], reverse=True)
+            return runs
+            
+        except Exception as e:
+            print(f"Error getting available runs: {e}")
+            return []
 
     def get_all_nodes_for_run(self, flow_id: str, run_id: str, stage: str = "mock", sub_stage: str = "mock") -> list[dict]:
         """Get all node execution results for a specific run"""
