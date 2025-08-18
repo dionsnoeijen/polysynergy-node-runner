@@ -38,12 +38,15 @@ class DynamoDbExecutionStorageService:
 
         self.table = self.dynamodb.Table(self.table_name)
 
-    def clear_previous_execution(self, flow_id: str, *args, **extra_kwargs):
+    def clear_previous_execution(self, flow_id: str, current_run_id: str = None, *, max_runs_to_keep: int = 50, **extra_kwargs):
         """
         Clear old execution data while preserving the last X runs.
+        
+        Args:
+            flow_id: The flow identifier
+            current_run_id: The current run ID to preserve (optional)
+            max_runs_to_keep: Maximum number of runs to keep (default: 50)
         """
-        current_run_id = args[0] if args else None
-        max_runs_to_keep = 50
         
         try:
             # Get all run_ids for this flow
