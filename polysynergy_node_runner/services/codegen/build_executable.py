@@ -101,7 +101,7 @@ def generate_code_from_json(json_data, id):
     rewrite_connections_for_groups(conns_data)
 
     code_parts.append("""\ndef create_execution_environment(mock = False, run_id:str = \"\", stage:str=None, sub_stage:str=None):
-        storage.clear_previous_execution(NODE_SETUP_VERSION_ID, run_id)
+        storage.clear_previous_execution(NODE_SETUP_VERSION_ID, current_run_id=run_id)
 
         execution_flow = { "run_id": run_id, "nodes_order": [], "connections": [], "execution_data": []}
 
