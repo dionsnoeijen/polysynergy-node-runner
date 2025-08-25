@@ -263,9 +263,6 @@ def lambda_handler(event, context):
                 execution_flow, flow, state = asyncio.run(execute_with_production_start(event, run_id, stage))
             print('request_id: ', context.aws_request_id)
 
-            for node in execution_flow.get("nodes_order", []):
-                print("NODE TYPE:", node.get("type"), "| PATH:", node.get("path", ''))
-
             last_http_response = next(
                 (node for node in reversed(execution_flow.get("nodes_order", [])) 
                  if node.get("type", "").startswith("HttpResponse")),
@@ -275,13 +272,38 @@ def lambda_handler(event, context):
             if last_http_response:
                 variables = last_http_response.get("variables", {})
                 http_response_node = state.get_node_by_id(last_http_response.get("id", ""))
-                response = {
-                    "statusCode": http_response_node.response.get('status', 100),
-                    "headers": http_response_node.response.get('headers', {}),
-                    "body": http_response_node.response.get('body', '')
-                }
 
-                print("FINAL RESPONSE", last_http_response, variables, response)
+                print("DEBUG: http_response_node:", http_response_node)
+                print("DEBUG: http_response_node.response:", http_response_node.response)
+                print("DEBUG: type(http_response_node.response):", type(http_response_node.response))
+                
+                # More defensive response construction
+                node_response = http_response_node.response
+                print("DEBUG: node_response assigned:", node_response, "type:", type(node_response))
+                
+                if isinstance(node_response, dict):
+                    status_part = node_response.get('status', 200)
+                    headers_part = node_response.get('headers', {})
+                    body_part = node_response.get('body', '')
+                else:
+                    print("ERROR: node_response is not a dict, using fallback values")
+                    status_part = 200
+                    headers_part = {"Content-Type": "application/json"}
+                    body_part = str(node_response) if node_response is not None else ""
+                
+                print("DEBUG: status_part:", status_part, "type:", type(status_part))
+                print("DEBUG: headers_part:", headers_part, "type:", type(headers_part))
+                print("DEBUG: body_part:", body_part, "type:", type(body_part))
+                
+                final_lambda_response = {
+                    "statusCode": status_part,
+                    "headers": headers_part,
+                    "body": body_part
+                }
+                
+                print("DEBUG: constructed final_lambda_response:", final_lambda_response)
+                print("DEBUG: type(final_lambda_response):", type(final_lambda_response))
+                print("FINAL RESPONSE", last_http_response, variables, final_lambda_response)
 
                 if is_test_run and has_listener:
                     send_flow_event(
@@ -291,7 +313,31 @@ def lambda_handler(event, context):
                         'run_end'
                     )
 
-                return response
+                print("DEBUG: About to return final_lambda_response:", final_lambda_response, "type:", type(final_lambda_response))
+                
+                # Safety check to ensure we always return a proper dict
+                if not isinstance(final_lambda_response, dict):
+                    print("SAFETY: final_lambda_response is not a dict, creating fallback response")
+                    final_lambda_response = {
+                        "statusCode": 500,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": json.dumps({"error": "Invalid response format", "original_response": str(final_lambda_response)})
+                    }
+                
+                # Ensure required keys exist
+                if "statusCode" not in final_lambda_response:
+                    final_lambda_response["statusCode"] = 200
+                if "headers" not in final_lambda_response:
+                    final_lambda_response["headers"] = {}
+                if "body" not in final_lambda_response:
+                    final_lambda_response["body"] = ""
+                    
+                print("DEBUG: FINAL SAFETY CHECK - returning:", final_lambda_response, "type:", type(final_lambda_response))
+                
+                # Absolutely explicit return to avoid any scoping issues
+                lambda_response_to_return = dict(final_lambda_response)  # Create a copy
+                print("DEBUG: EXPLICITLY RETURNING:", lambda_response_to_return)
+                return lambda_response_to_return
 
             if is_test_run and has_listener:
                 send_flow_event(
