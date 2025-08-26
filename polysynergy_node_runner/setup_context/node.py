@@ -95,7 +95,7 @@ class Node:
             "category": self.category,
             "variables": [var.to_dict() for var in self.variables],
             "has_enabled_switch": self.has_enabled_switch,
-            "documentation": self._get_documentation(),
+            "has_documentation": self._get_documentation() is not None,
             "stateful": self.stateful,
             "default_flow_state": self.flow_state.value,
             "version": self.version,
@@ -105,6 +105,7 @@ class Node:
         if self.has_play_button:
             node_structure["has_play_button"] = self.has_play_button
 
-        node_structure["code"] = self._get_code()
+        # Note: Code field removed - using path-based discovery instead
+        # node_structure["code"] = self._get_code()
 
         return node_structure

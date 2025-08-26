@@ -1,6 +1,84 @@
-from polysynergy_node_runner.execution_context.flow_state import FlowState
+import hashlib
+import logging
+import os
+from pathlib import Path
+from importlib import import_module
 
+from polysynergy_node_runner.execution_context.flow_state import FlowState
 from polysynergy_node_runner.services.codegen.steps.get_version_suffix import get_version_suffix
+
+logger = logging.getLogger(__name__)
+
+
+def discover_node_code(node_data: dict) -> str:
+    """
+    Discover node code using path-based discovery with fallback to stored code.
+    Uses NODE_PACKAGES env var to determine which packages are available.
+    
+    Args:
+        node_data: Node configuration from JSON
+        
+    Returns:
+        Node code (either from file system or stored fallback)
+    """
+    node_path = node_data.get("path")
+    
+    if node_path:
+        try:
+            # Check if this node is from an available package
+            node_packages = os.getenv("NODE_PACKAGES", "").split(",")
+            node_packages = [pkg.strip() for pkg in node_packages if pkg.strip()]
+            
+            # Check if the node path starts with any available package
+            is_available_package = any(node_path.startswith(pkg) for pkg in node_packages)
+            
+            if is_available_package:
+                # Try to discover the file without importing (to avoid dependency issues)
+                file_path = node_path.replace(".", "/") + ".py"
+                
+                # Search in common locations relative to current working directory
+                search_paths = [
+                    Path.cwd().parent / "nodes_agno",     # ../nodes_agno/
+                    Path.cwd().parent / "nodes",          # ../nodes/
+                    Path.cwd().parent,                    # Parent directory
+                    Path.cwd(),                          # Current directory
+                    Path("/app")                         # Docker location
+                ]
+                
+                for base_path in search_paths:
+                    potential_file = base_path / file_path
+                    if potential_file.exists():
+                        try:
+                            with open(potential_file, 'r') as f:
+                                live_code = f.read()
+                            
+                            # Optional: Check for hash differences and warn
+                            if node_data.get("code_hash"):
+                                current_hash = hashlib.sha256(live_code.encode()).hexdigest()
+                                if current_hash != node_data.get("code_hash"):
+                                    logger.warning(
+                                        f"Node {node_data.get('type', 'unknown')} version differs from flow definition "
+                                        f"(using local version)"
+                                    )
+                            
+                            logger.debug(f"Successfully discovered live code for {node_data.get('type', 'unknown')} at {potential_file}")
+                            return live_code
+                            
+                        except Exception as read_e:
+                            logger.warning(f"Failed to read file {potential_file}: {read_e}")
+                            continue
+            else:
+                logger.debug(f"Node {node_data.get('type', 'unknown')} from package not in NODE_PACKAGES, using stored code")
+                    
+        except Exception as e:
+            logger.warning(f"Failed to discover code for {node_data.get('type', 'unknown')} at {node_path}: {e}")
+    
+    # Fallback to stored code
+    stored_code = node_data.get("code", "")
+    if not stored_code:
+        logger.warning(f"No code found for node {node_data.get('type', 'unknown')} (no path or stored code)")
+    
+    return stored_code
 
 
 def build_nodes_code(nodes: list, groups_with_output: set):
@@ -13,7 +91,8 @@ def build_nodes_code(nodes: list, groups_with_output: set):
         if is_group:
             class_name = f"GroupNode_{nd['id'].replace('-', '_')}" if is_group else "UnknownClass"
         else:
-            code = nd.get("code", "")
+            # Try path-based discovery first, fallback to stored code
+            code = discover_node_code(nd)
             class_name = "UnknownClass"
             if "@node" in code:
                 after = code.split("@node", 1)[-1]
