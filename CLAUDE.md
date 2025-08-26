@@ -96,6 +96,124 @@ Supporting services for the framework:
 - **State Management**: Nodes have execution states (pending, processed, killed, etc.)
 - **Placeholder System**: Template replacement system using Jinja2-like syntax (`{{ variable }}`)
 
+## GroupNode Architecture
+
+### Overview
+GroupNodes are dynamically generated containers that allow multiple nodes to be treated as a single unit in the workflow. They enable visual organization and encapsulation of complex sub-flows while maintaining data flow connections to external nodes.
+
+### GroupNode Generation Process
+
+#### 1. Identification Phase
+- `find_groups_with_output()` identifies which groups have outgoing connections
+- Only groups with external output connections get generated as GroupNode classes
+- Groups with no external connections are skipped (optimization)
+
+#### 2. Code Generation Phase (`build_group_nodes_code.py`)
+```python
+# Generated GroupNode structure
+class GroupNode_e6284949_e7ae_4349_aa36_dd28fe79ed93(ExecutableNode):
+    a_instance = None  # from targetHandle storage
+    b_knowledge = None  # from targetHandle knowledge
+    
+    def execute(self):
+        pass
+```
+
+Properties are created with pattern: `{prefix}_{source_handle}` where:
+- `prefix`: Alphabetic identifier (a, b, c...) for each internal source node
+- `source_handle`: Original output handle from the internal node
+
+#### 3. Connection Rewriting (`rewrite_connections_for_groups.py`)
+
+**Phase 1 - Input Mapping**: Builds maps for connections going INTO groups
+```python
+group_prefix_map[group_id][source_node_id] = prefix  # Maps internal nodes to prefixes
+group_target_map[group_id][target_handle] = new_handle  # Maps handles
+```
+
+**Phase 2 - Connection Modification**: Only rewrites connections FROM groups when:
+- Source node exists in `group_prefix_map` (received inputs from outside)
+- AND has `sourceGroupId`
+
+**Critical Discovery**: Not all connections get rewritten! Service nodes inside groups that don't receive external inputs maintain their original `sourceNodeId`.
+
+### Data Flow Architecture
+
+#### 1. Simple Data Flow (Works Correctly)
+```
+StringNode (inside group) → GroupNode.a_output → ExternalNode
+```
+
+**Mechanism**:
+1. `apply_from_incoming_connection()` is called on target node
+2. `get_connection_source_variable()` resolves the data path:
+   ```python
+   source_node = get_node_by_id(connection.source_node_id)  # Gets GroupNode
+   path_parts = connection.source_handle.split(".")         # ["a_output"]
+   current = getattr(source_node, "a_output")               # Gets actual value
+   ```
+3. Data flows through GroupNode property as proxy
+
+#### 2. Service Discovery Flow (Currently Broken)
+```
+SettingsNode (inside group) → GroupNode.a_instance → AgentNode.provide_instance()
+```
+
+**Problem**: 
+- `find_connected_*` helpers expect nodes with `provide_instance()` method
+- GroupNode lacks `provide_instance()` - it's only a data proxy
+- Service interface is lost at the group boundary
+
+### Service Discovery Challenge
+
+#### Current Find Helper Pattern
+```python
+async def find_connected_storage(node: Node) -> Storage | None:
+    storage_connections = [c for c in node.get_in_connections() if c.target_handle == "storage"]
+    for conn in storage_connections:
+        storage_node = node.state.get_node_by_id(conn.source_node_id)  # May get GroupNode
+        if hasattr(storage_node, "provide_instance"):  # GroupNode fails this check
+            return await storage_node.provide_instance()
+```
+
+#### Root Cause Analysis
+1. **Data Flow**: Uses property proxy pattern - GroupNode acts as passthrough
+2. **Service Discovery**: Requires method delegation - GroupNode has no `provide_instance()`
+3. **Architecture Gap**: GroupNodes designed for data, not service interfaces
+
+### Connection Data Structure
+
+Connections contain crucial metadata for group traversal:
+```python
+{
+    "id": "conn-1",
+    "sourceNodeId": "actual-service-node-id",     # Original before rewriting
+    "sourceGroupId": "group-1",                   # Container group
+    "sourceHandle": "instance",                   # Original output handle  
+    "targetNodeId": "external-node",
+    "targetGroupId": None,
+    "targetHandle": "storage"
+}
+```
+
+**After rewriting (when applicable)**:
+```python
+{
+    "sourceNodeId": "group-1",           # Changed to GroupNode
+    "sourceHandle": "a_instance",        # Prefixed handle
+    # ... other fields unchanged
+}
+```
+
+### Future Enhancement Requirements
+
+For proper service discovery through groups, one of these approaches is needed:
+
+1. **GroupNode Service Delegation**: Make GroupNode implement service interfaces and delegate to internal nodes
+2. **Smart Find Helpers**: Modify find helpers to traverse through GroupNodes to actual service providers  
+3. **Connection Preservation**: Maintain direct service references even when grouped
+4. **Hybrid Approach**: Different handling for data flow vs service discovery
+
 ## Testing Structure
 
 The project uses pytest with the following structure:
