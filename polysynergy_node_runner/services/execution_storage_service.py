@@ -49,6 +49,16 @@ class DynamoDbExecutionStorageService:
         """
         
         try:
+            # Get current highest run number before cleanup
+            current_max_run_number = self._get_max_run_number(flow_id)
+            next_run_number = current_max_run_number + 1
+            
+            # Store the run number for this run_id  
+            if not hasattr(self, '_current_run_numbers'):
+                self._current_run_numbers = {}
+            if current_run_id:
+                self._current_run_numbers[current_run_id] = next_run_number
+            
             # Get all run_ids for this flow
             run_ids = self._get_all_run_ids(flow_id)
             
@@ -105,6 +115,49 @@ class DynamoDbExecutionStorageService:
         except Exception as e:
             print(f"Error getting run IDs: {e}")
             return []
+
+    def _get_max_run_number(self, flow_id: str) -> int:
+        """Get the highest run_number from existing runs"""
+        try:
+            # Use query instead of scan since we have the partition key
+            response = self.table.query(
+                KeyConditionExpression=Key("PK").eq(flow_id)
+            )
+            
+            max_run_number = 0
+            
+            # Process all items to find highest run_number
+            for item in response.get('Items', []):
+                sk = item.get('SK', '')
+                if '#' in sk and 'connections' not in sk and 'mock_nodes' not in sk and 'data' in item:
+                    try:
+                        data = json.loads(item.get('data', '{}'))
+                        if 'run_number' in data:
+                            max_run_number = max(max_run_number, int(data['run_number']))
+                    except (json.JSONDecodeError, ValueError, KeyError):
+                        pass  # Skip items with invalid data
+            
+            # Handle pagination
+            while 'LastEvaluatedKey' in response:
+                response = self.table.query(
+                    KeyConditionExpression=Key("PK").eq(flow_id),
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                for item in response.get('Items', []):
+                    sk = item.get('SK', '')
+                    if '#' in sk and 'connections' not in sk and 'mock_nodes' not in sk and 'data' in item:
+                        try:
+                            data = json.loads(item.get('data', '{}'))
+                            if 'run_number' in data:
+                                max_run_number = max(max_run_number, int(data['run_number']))
+                        except (json.JSONDecodeError, ValueError, KeyError):
+                            pass
+            
+            return max_run_number
+            
+        except Exception as e:
+            print(f"Error getting max run number: {e}")
+            return 0
 
     def _delete_runs(self, flow_id: str, run_ids_to_delete: list[str]):
         """Delete all data for specific run_ids using scan and delete"""
@@ -227,7 +280,17 @@ class DynamoDbExecutionStorageService:
             "error": str(node.get_exception()) if node.get_exception() else None,
             "killed": node.is_killed(),
             "processed": node.is_processed(),
+            # Add node metadata for easier reconstruction
+            "node_id": node.id,
+            "order": order,
+            "handle": node.handle,
+            "type": node.path.split(".")[-1] if node.path else "Unknown",
+            "run_id": run_id,
         }
+        
+        # Add run_number if this is the first node (order 0) of the run
+        if order == 0 and hasattr(self, '_current_run_numbers') and run_id in self._current_run_numbers:
+            result_data["run_number"] = self._current_run_numbers[run_id]
 
         self.table.put_item(Item={
             "PK": flow_id,
@@ -279,7 +342,7 @@ class DynamoDbExecutionStorageService:
                             "timestamp": run_id  # Default fallback
                         }
                     
-                    # If this is a node result (not connections/mock_nodes), extract timestamp
+                    # If this is a node result (not connections/mock_nodes), extract timestamp and run_number
                     if (len(parts) >= 3 and 
                         'connections' not in sk and 
                         'mock_nodes' not in sk and 
@@ -288,6 +351,8 @@ class DynamoDbExecutionStorageService:
                             data = json.loads(item.get('data', '{}'))
                             if 'timestamp' in data:
                                 runs_metadata[run_id]["timestamp"] = data["timestamp"]
+                            if 'run_number' in data:
+                                runs_metadata[run_id]["run_number"] = data["run_number"]
                         except (json.JSONDecodeError, KeyError):
                             pass  # Keep default timestamp if parsing fails
             
@@ -317,6 +382,8 @@ class DynamoDbExecutionStorageService:
                                 data = json.loads(item.get('data', '{}'))
                                 if 'timestamp' in data:
                                     runs_metadata[run_id]["timestamp"] = data["timestamp"]
+                                if 'run_number' in data:
+                                    runs_metadata[run_id]["run_number"] = data["run_number"]
                             except (json.JSONDecodeError, KeyError):
                                 pass
             

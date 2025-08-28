@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import re
 from pathlib import Path
 from importlib import import_module
 
@@ -34,7 +35,9 @@ def discover_node_code(node_data: dict) -> str:
             
             if is_available_package:
                 # Try to discover the file without importing (to avoid dependency issues)
-                file_path = node_path.replace(".", "/") + ".py"
+                # Remove the class name (last component) to get the module path
+                module_path = ".".join(node_path.split(".")[:-1])
+                file_path = module_path.replace(".", "/") + ".py"
                 
                 # Search in common locations relative to current working directory
                 search_paths = [
@@ -89,20 +92,36 @@ def build_nodes_code(nodes: list, groups_with_output: set):
         if is_group and nd["id"] not in groups_with_output:
             continue
         if is_group:
-            class_name = f"GroupNode_{nd['id'].replace('-', '_')}" if is_group else "UnknownClass"
+            class_name = f"GroupNode_{nd['id'].replace('-', '_')}"
         else:
-            # Try path-based discovery first, fallback to stored code
+            # The path is the single source of truth for the class name
+            node_path = nd.get('path', '')
+            
+            if not node_path:
+                logger.error(
+                    f"Node {nd.get('id')} has no path! This is a critical data error. "
+                    f"Node type: {nd.get('type')}"
+                )
+                class_name = "UnknownClass"
+            else:
+                # Extract the class name from the path (last component)
+                # e.g., 'polysynergy_nodes.variable.variable_string.VariableString' -> 'VariableString'
+                base_class_name = node_path.split('.')[-1]
+                
+                # Add version suffix for the compiled version
+                version = nd.get("version", 0.0)
+                version_suffix = get_version_suffix(version)
+                class_name = f"{base_class_name}{version_suffix}"
+                
+                logger.debug(
+                    f"Node {nd.get('id')}: path={node_path}, "
+                    f"extracted class={base_class_name}, "
+                    f"versioned class={class_name}"
+                )
+            
+            # Still need to discover code for inclusion in the generated file
+            # But we don't use it for class name extraction
             code = discover_node_code(nd)
-            class_name = "UnknownClass"
-            if "@node" in code:
-                after = code.split("@node", 1)[-1]
-                if "class" in after:
-                    after2 = after.split("class", 1)[-1]
-                    base_class_name = after2.split("(")[0].strip() or "UnknownClass"
-                    version = nd.get("version", 0.0)
-
-                    version_suffix = get_version_suffix(version)
-                    class_name = f"{base_class_name}{version_suffix}"
 
         var_name = "            node_" + nd["id"].replace("-", "_")
         factory_method_name = "make_" + var_name.strip() + "_instance(node_context)"

@@ -3,6 +3,7 @@ from typing import Optional, TYPE_CHECKING
 
 from polysynergy_node_runner.execution_context.context import Context
 from polysynergy_node_runner.execution_context.send_flow_event import send_flow_event
+from polysynergy_node_runner.setup_context.service_node import ServiceNode
 if TYPE_CHECKING:
     from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
 
@@ -85,6 +86,11 @@ class FlowExecutionMixin:
 
         self.context.execution_flow['nodes_order'].append({ "id": self.id, "handle": self.handle, "type": self.__class__.__name__, "order": order})
 
+        # Check if this is a ServiceNode by looking for provide_instance method
+        is_service_node = hasattr(self, 'provide_instance') and callable(getattr(self, 'provide_instance'))
+        # Track if this service node provided an instance (no execute method)
+        is_service_node_provided = False
+        
         try:
             self._resolve_secret()
             self._resolve_environment_variable()
@@ -94,8 +100,14 @@ class FlowExecutionMixin:
                 self.execute()
 
         except NotImplementedError as e:
-            print(f"Node {self.handle} does not implement execute method")
-            self._exception = e
+            # For ServiceNodes, not implementing execute() is expected behavior
+            if is_service_node:
+                print(f"ServiceNode {self.handle} successfully provides instance (no execute method needed)")
+                is_service_node_provided = True
+                # Don't set exception for ServiceNodes
+            else:
+                print(f"Node {self.handle} does not implement execute method")
+                self._exception = e
         except Exception as e:
             print(f"Unhandled exception in node {self.handle}: {e}")
             self._exception = e
@@ -123,11 +135,23 @@ class FlowExecutionMixin:
 
         if has_listener:
             print(f"Sending flow event for node {self.handle} with status")
+            # Determine the status based on node type and execution result
+            status = 'killed'
+            if not self.is_killed():
+                if self.get_exception():
+                    status = 'error'
+                elif is_service_node_provided:
+                    # ServiceNodes that provided instance (no execute method) get 'provided'
+                    status = 'provided'
+                else:
+                    # Regular nodes (including ServiceNodes with execute method) get 'success'
+                    status = 'success'
+            
             send_flow_event(
                 flow_id=self.context.node_setup_version_id,
                 run_id=self.context.run_id,
                 node_id=self.id,
                 event_type='end_node',
                 order=order,
-                status='killed' if self.is_killed() else 'error' if self.get_exception() else 'success',
+                status=status,
             )

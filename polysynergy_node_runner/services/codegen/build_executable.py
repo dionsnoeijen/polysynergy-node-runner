@@ -2,7 +2,7 @@ import copy
 
 from polysynergy_node_runner.services.codegen.steps.build_connections_code import build_connections_code
 from polysynergy_node_runner.services.codegen.steps.build_group_nodes_code import build_group_nodes_code
-from polysynergy_node_runner.services.codegen.steps.build_nodes_code import build_nodes_code
+from polysynergy_node_runner.services.codegen.steps.build_nodes_code import build_nodes_code, discover_node_code
 from polysynergy_node_runner.services.codegen.steps.find_groups_with_output import find_groups_with_output
 from polysynergy_node_runner.services.codegen.steps.rewrite_connections_for_groups import rewrite_connections_for_groups
 from polysynergy_node_runner.services.codegen.steps.unify_node_code import unify_node_code
@@ -63,9 +63,12 @@ def generate_code_from_json(json_data, id):
         if nd.get("type") in ["group"]:
             continue
         path = nd["path"]
-        code = nd.get("code", "")
         version = nd.get("version", 0.0)
         version_key = f"{path}-v{str(version).replace('.', '_')}"
+        
+        # Always discover code from path, ignore the code field entirely
+        code = discover_node_code(nd)
+        
         if code.strip() and version_key not in path_version_map:
             cleaned = unify_node_code(code, collected_imports, version)
             path_version_map[version_key] = cleaned
@@ -282,7 +285,8 @@ def lambda_handler(event, context):
                 print("DEBUG: node_response assigned:", node_response, "type:", type(node_response))
                 
                 if isinstance(node_response, dict):
-                    status_part = node_response.get('status', 200)
+                    # Handle both 'status' and 'statusCode' keys for compatibility
+                    status_part = node_response.get('status', node_response.get('statusCode', 200))
                     headers_part = node_response.get('headers', {})
                     body_part = node_response.get('body', '')
                 else:
