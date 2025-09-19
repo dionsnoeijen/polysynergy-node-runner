@@ -189,7 +189,10 @@ def lambda_handler(event, context):
     sub_stage = event.get("sub_stage", "mock")
     node_id = event.get("node_id")
 
-    run_id = str(uuid.uuid4())
+    # Use provided run_id from API if available, otherwise generate new one
+    run_id = event.get("run_id")
+    if not run_id:
+        run_id = str(uuid.uuid4())
 
 
     try:
