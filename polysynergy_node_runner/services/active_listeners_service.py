@@ -1,13 +1,15 @@
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
+from typing import Tuple
 
 import boto3
 from boto3.dynamodb.conditions import Key
 
 
 class ActiveListenersService:
-    _listener_cache: dict[str, bool] = {}
+    # bool, expires_at
+    _listener_cache: dict[str, Tuple[bool, datetime]] = {}
 
     def __init__(
         self,
@@ -45,38 +47,47 @@ class ActiveListenersService:
     def _cache_key(self, node_setup_version_id: str, required_stage: str) -> str:
         return f"{node_setup_version_id}@{required_stage}"
 
-    def has_listener(self, node_setup_version_id: str, required_stage: str = "mock", max_age_minutes: int = 60) -> bool:
+    def has_listener(
+        self,
+        node_setup_version_id: str,
+        required_stage: str = "mock",
+        max_age_minutes: int = 60,
+        first_run: bool = False,
+    ) -> bool:
         key = self._cache_key(node_setup_version_id, required_stage)
-        if key in self._listener_cache:
-            return self._listener_cache[key]
+        now = datetime.now(timezone.utc)
 
-        response = self.table.query(
-            KeyConditionExpression=Key("PK").eq(node_setup_version_id)
-        )
+        if not first_run and key in self._listener_cache:
+            value, expires_at = self._listener_cache[key]
+            if now <= expires_at:
+                return value
+            del self._listener_cache[key]
 
+        response = self.table.query(KeyConditionExpression=Key("PK").eq(node_setup_version_id))
         items = response.get("Items", [])
         if not items:
-            self._listener_cache[key] = False
+            self._listener_cache[key] = (False, now + timedelta(seconds=2))  # korte negatieve TTL
             return False
 
         item = items[0]
         if item.get("stage") != required_stage:
-            self._listener_cache[key] = False
+            self._listener_cache[key] = (False, now + timedelta(seconds=2))
             return False
 
-        timestamp = item.get("last_activated_at")
-        if not timestamp:
-            self._listener_cache[key] = False
+        ts = item.get("last_activated_at")
+        if not ts:
+            self._listener_cache[key] = (False, now + timedelta(seconds=2))
             return False
 
         try:
-            last_active = datetime.fromisoformat(timestamp)
-            now = datetime.now(timezone.utc)
+            last_active = datetime.fromisoformat(ts)
             is_valid = now - last_active < timedelta(minutes=max_age_minutes)
-            self._listener_cache[key] = is_valid
+            pos_expires = last_active + timedelta(minutes=max_age_minutes)
+            neg_expires = now + timedelta(seconds=2)
+            self._listener_cache[key] = (is_valid, pos_expires if is_valid else neg_expires)
             return is_valid
         except Exception:
-            self._listener_cache[key] = False
+            self._listener_cache[key] = (False, now + timedelta(seconds=2))
             return False
 
     def clear_listeners(self, node_setup_version_id: str):

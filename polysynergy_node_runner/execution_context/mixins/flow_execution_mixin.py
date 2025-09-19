@@ -1,9 +1,11 @@
 import inspect
+import sys
+import traceback
 from typing import Optional, TYPE_CHECKING
 
 from polysynergy_node_runner.execution_context.context import Context
 from polysynergy_node_runner.execution_context.send_flow_event import send_flow_event
-from polysynergy_node_runner.setup_context.service_node import ServiceNode
+
 if TYPE_CHECKING:
     from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
 
@@ -109,7 +111,8 @@ class FlowExecutionMixin:
                 print(f"Node {self.handle} does not implement execute method")
                 self._exception = e
         except Exception as e:
-            print(f"Unhandled exception in node {self.handle}: {e}")
+            print(f"Unhandled exception in node {self.handle}: {e}", file=sys.stderr)
+            traceback.print_exc()
             self._exception = e
 
         self.context.storage.store_node_result(
@@ -138,7 +141,7 @@ class FlowExecutionMixin:
             # Determine the status based on node type and execution result
             status = 'killed'
             if not self.is_killed():
-                if self.get_exception():
+                if self._exception:
                     status = 'error'
                 elif is_service_node_provided:
                     # ServiceNodes that provided instance (no execute method) get 'provided'

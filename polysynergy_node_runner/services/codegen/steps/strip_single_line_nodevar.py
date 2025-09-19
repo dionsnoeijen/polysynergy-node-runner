@@ -3,7 +3,8 @@ import re
 def strip_single_line_nodevar(line):
     line = re.sub(r'dock_property\s*\([^)]*\)', '', line)
 
-    mdef = re.search(r'default\s*=\s*([^,\)\s]+)', line)
+    # Match lists [..] or simple values
+    mdef = re.search(r'default\s*=\s*(\[[^\]]*\]|[^,\)\s]+)', line)
     if mdef:
         default_val = mdef.group(1).strip()
     else:

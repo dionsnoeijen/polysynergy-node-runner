@@ -198,7 +198,7 @@ def lambda_handler(event, context):
         is_ui_mock = stage == "mock" and node_id is not None
         if is_ui_mock:
             print("Running in mock mode with node_id:", node_id)
-            has_listener = active_listeners_service.has_listener(NODE_SETUP_VERSION_ID)
+            has_listener = active_listeners_service.has_listener(NODE_SETUP_VERSION_ID, first_run=True)
             print("Has listener:", has_listener, NODE_SETUP_VERSION_ID)
             if has_listener:
                 send_flow_event(
@@ -232,7 +232,7 @@ def lambda_handler(event, context):
 
             has_listener = False
             if is_test_run:
-                has_listener = active_listeners_service.has_listener(NODE_SETUP_VERSION_ID)
+                has_listener = active_listeners_service.has_listener(NODE_SETUP_VERSION_ID, first_run=True)
 
                 if has_listener:
                     send_flow_event(

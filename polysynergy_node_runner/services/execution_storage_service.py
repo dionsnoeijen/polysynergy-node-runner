@@ -1,6 +1,8 @@
 import json
 import os
+from copy import deepcopy
 from datetime import datetime
+from typing import Dict, Any, Optional, Callable
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -396,6 +398,26 @@ class DynamoDbExecutionStorageService:
             print(f"Error getting available runs: {e}")
             return []
 
+    def _make_sk(self, run_id: str, node_id: str, order: int, stage: str, sub_stage: str) -> str:
+        return f"{run_id}#{node_id}#{order}#{stage}#{sub_stage}"
+
+    def find_node_order(self, flow_id: str, run_id: str, node_id: str) -> int | None:
+        try:
+            resp = self.table.query(
+                KeyConditionExpression=Key("PK").eq(flow_id) &
+                                       Key("SK").begins_with(f"{run_id}#{node_id}#"),
+                Limit=1,  # we hebben er maar één nodig
+            )
+            items = resp.get("Items", [])
+            if not items:
+                return None
+            sk = items[0]["SK"]
+            parts = sk.split("#")  # [run_id, node_id, order, stage, sub_stage]
+            return int(parts[2]) if len(parts) >= 3 else None
+        except Exception as e:
+            print(f"find_node_order error: {e}")
+            return None
+
     def get_all_nodes_for_run(self, flow_id: str, run_id: str, stage: str = "mock", sub_stage: str = "mock") -> list[dict]:
         """Get all node execution results for a specific run"""
         try:
@@ -487,6 +509,100 @@ class DynamoDbExecutionStorageService:
         except Exception as e:
             print(f"Error getting first node result: {e}")
             return {}
+
+    def upsert_node_fields(
+        self,
+        flow_id: str,
+        run_id: str,
+        node_id: str,
+        order: int,
+        patch: Dict[str, Any],
+        *,
+        stage: str = "mock",
+        sub_stage: str = "mock",
+        mutate: Optional[Callable[[dict], None]] = None,
+    ):
+        """
+        Fetch existing node result JSON, apply a shallow/deep patch, then write it back.
+        - `patch` merges into root of the stored JSON (we'll do a shallow merge + a
+          special-case for 'variables' dict).
+        - `mutate` lets you apply arbitrary custom changes to the loaded dict.
+        Idempotent: same PK/SK → overwrite the single item.
+        """
+        sk = self._make_sk(run_id, node_id, order, stage, sub_stage)
+
+        # 1) read current
+        current: dict = {}
+        try:
+            resp = self.table.get_item(Key={"PK": flow_id, "SK": sk})
+            item = resp.get("Item")
+            if item and "data" in item:
+                current = json.loads(item["data"])
+        except Exception as e:
+            print(f"upsert_node_fields get_item error: {e}")
+
+        # 2) merge patch
+        merged = deepcopy(current) if isinstance(current, dict) else {}
+        for k, v in (patch or {}).items():
+            if k == "variables" and isinstance(v, dict):
+                # special: merge variables dict shallowly
+                merged.setdefault("variables", {})
+                if isinstance(merged["variables"], dict):
+                    merged["variables"].update(v)
+                else:
+                    merged["variables"] = v
+            else:
+                merged[k] = v
+
+        # 3) optional mutate hook (e.g. deep edits)
+        if mutate:
+            try:
+                mutate(merged)
+            except Exception as e:
+                print(f"upsert_node_fields mutate error: {e}")
+
+        # 4) write back
+        try:
+            self.table.put_item(Item={
+                "PK": flow_id,
+                "SK": sk,
+                "data": json.dumps(merged, default=str),
+            })
+        except Exception as e:
+            print(f"upsert_node_fields put_item error: {e}")
+
+    def set_node_variable_value(
+        self,
+        flow_id: str,
+        run_id: str,
+        node_id: str,
+        order: int | None,
+        true_text: str,
+        *,
+        stage: str = "mock",
+        sub_stage: str = "mock",
+        handle: str = 'true_path'
+    ):
+        """
+        Convenience: set variables.true_path while preserving all other fields.
+        If order is None, we'll try to discover it.
+        """
+        if order is None:
+            order = self.find_node_order(flow_id, run_id, node_id)
+            if order is None:
+                # If we really can't find it, default to 0 (or bail out)
+                print(f"set_node_true_path: could not find order for {node_id}, defaulting to 0")
+                order = 0
+
+        self.upsert_node_fields(
+            flow_id=flow_id,
+            run_id=run_id,
+            node_id=node_id,
+            order=order,
+            stage=stage,
+            sub_stage=sub_stage,
+            patch={"variables": {handle: true_text}},
+        )
 
     def clear_all_runs(self, flow_id: str):
         """Clear all execution data for a flow"""
