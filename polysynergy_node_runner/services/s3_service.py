@@ -59,11 +59,32 @@ class S3Service:
             logger.info(f"Bucket created: {bucket_name}")
 
             if self.public:
+                # Enable ACLs for public buckets so we can set public-read ACL on objects
+                self._enable_bucket_acls(bucket_name)
                 self._set_public_bucket_policy(bucket_name)
 
         except Exception as e:
             logger.error(f"Failed to create bucket {bucket_name}: {e}")
             raise
+
+    def _enable_bucket_acls(self, bucket_name):
+        """Enable ACLs for the bucket so we can set public-read ACL on objects"""
+        try:
+            # Set bucket ownership to allow ACLs
+            self.s3_client.put_bucket_ownership_controls(
+                Bucket=bucket_name,
+                OwnershipControls={
+                    'Rules': [
+                        {
+                            'ObjectOwnership': 'BucketOwnerPreferred'
+                        }
+                    ]
+                }
+            )
+            logger.info(f"Bucket ownership configured for ACLs: {bucket_name}")
+        except Exception as e:
+            logger.error(f"Failed to configure bucket ownership for {bucket_name}: {e}")
+            # Don't raise - try to continue with bucket policy approach
 
     def _set_public_bucket_policy(self, bucket_name):
         try:
