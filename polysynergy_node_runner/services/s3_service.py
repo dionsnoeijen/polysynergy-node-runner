@@ -90,11 +90,17 @@ class S3Service:
     def upload_file(self, file_obj: bytes, file_key: str) -> str | None:
         try:
             content_type, _ = mimetypes.guess_type(file_key)
+            extra_args = {'ContentType': content_type or 'application/octet-stream'}
+
+            # Add public-read ACL for public buckets to make objects publicly accessible
+            if self.public:
+                extra_args['ACL'] = 'public-read'
+
             self.s3_client.upload_fileobj(
                 io.BytesIO(file_obj),
                 self.bucket_name,
                 file_key,
-                ExtraArgs={'ContentType': content_type or 'application/octet-stream'}
+                ExtraArgs=extra_args
             )
             logger.info(f"Uploaded: {file_key}")
             if self.public:
