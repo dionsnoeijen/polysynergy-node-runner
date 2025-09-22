@@ -88,6 +88,22 @@ class S3Service:
 
     def _set_public_bucket_policy(self, bucket_name):
         try:
+            # First, disable Block Public Access for this bucket
+            try:
+                self.s3_client.put_public_access_block(
+                    Bucket=bucket_name,
+                    PublicAccessBlockConfiguration={
+                        'BlockPublicAcls': False,
+                        'IgnorePublicAcls': False,
+                        'BlockPublicPolicy': False,
+                        'RestrictPublicBuckets': False
+                    }
+                )
+                logger.info(f"Disabled Block Public Access for: {bucket_name}")
+            except Exception as block_error:
+                logger.error(f"Failed to disable Block Public Access for {bucket_name}: {block_error}")
+
+            # Set the bucket policy for public read access
             policy = {
                 "Version": "2012-10-17",
                 "Statement": [
@@ -107,15 +123,15 @@ class S3Service:
             logger.info(f"Public bucket policy set for: {bucket_name}")
         except Exception as e:
             logger.error(f"Failed to set public bucket policy: {e}")
+            raise  # This is critical for public buckets
 
     def upload_file(self, file_obj: bytes, file_key: str) -> str | None:
         try:
             content_type, _ = mimetypes.guess_type(file_key)
             extra_args = {'ContentType': content_type or 'application/octet-stream'}
 
-            # Add public-read ACL for public buckets to make objects publicly accessible
-            if self.public:
-                extra_args['ACL'] = 'public-read'
+            # Don't use ACLs - rely on bucket policy for public access
+            # This avoids the "AccessControlListNotSupported" error
 
             self.s3_client.upload_fileobj(
                 io.BytesIO(file_obj),
