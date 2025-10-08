@@ -103,7 +103,7 @@ def generate_code_from_json(json_data, id):
 
     rewrite_connections_for_groups(conns_data)
 
-    code_parts.append("""\ndef create_execution_environment(mock = False, run_id:str = \"\", stage:str=None, sub_stage:str=None):
+    code_parts.append("""\ndef create_execution_environment(mock = False, run_id:str = \"\", stage:str=None, sub_stage:str=None, trigger_node_id:str=None):
         storage.clear_previous_execution(NODE_SETUP_VERSION_ID, current_run_id=run_id)
 
         execution_flow = { "run_id": run_id, "nodes_order": [], "connections": [], "execution_data": []}
@@ -122,7 +122,8 @@ def generate_code_from_json(json_data, id):
             env_var_manager=get_env_var_manager(),
             stage=stage if stage else "mock",
             sub_stage=sub_stage if sub_stage else "mock",
-            execution_flow=execution_flow
+            execution_flow=execution_flow,
+            trigger_node_id=trigger_node_id
         )
 
         connection_context = ConnectionContext(
@@ -137,9 +138,17 @@ def generate_code_from_json(json_data, id):
     code_parts.append("        return flow, execution_flow, state")
     code_parts.append("""\nasync def execute_with_mock_start_node(node_id:str, run_id:str, sub_stage:str):
 
-    flow, execution_flow, state = create_execution_environment(True, run_id=run_id, stage="mock", sub_stage=sub_stage)
-
     node_id = str(node_id)
+
+    flow, execution_flow, state = create_execution_environment(
+        True,
+        run_id=run_id,
+        stage="mock",
+        sub_stage=sub_stage,
+        trigger_node_id=node_id
+    )
+
+    
     node = state.get_node_by_id(str(node_id))
     if node is None:
         raise ValueError(f"Node ID {node_id} not found.")
@@ -162,6 +171,10 @@ async def execute_with_production_start(event=None, run_id:str=None, stage:str=N
     if not entry_nodes:
         raise ValueError("No valid entry node found (expected 'route' or 'schedule').")
 
+    # Capture the entry node type for later use
+    entry_node = entry_nodes[0]
+    is_schedule = entry_node.path == 'polysynergy_nodes.schedule.schedule.Schedule'
+
     if event:
         for node in entry_nodes:
             if node.path == 'polysynergy_nodes.route.route.Route':
@@ -172,7 +185,7 @@ async def execute_with_production_start(event=None, run_id:str=None, stage:str=N
                 node.cookies = event.get("cookies", {})
                 node.route_variables = event.get("pathParameters", {})
 
-    await flow.execute_node(entry_nodes[0])
+    await flow.execute_node(entry_node)
 
     storage.store_connections_result(
         flow_id=NODE_SETUP_VERSION_ID,
@@ -180,7 +193,7 @@ async def execute_with_production_start(event=None, run_id:str=None, stage:str=N
         connections=[c.to_dict() for c in state.connections],
     )
 
-    return execution_flow, flow, state""")
+    return execution_flow, flow, state, is_schedule""")
 
     code_parts.append("""\nimport json
 
@@ -252,7 +265,7 @@ def lambda_handler(event, context):
                 asyncio.get_running_loop()
                 # If we get here, we're in a running loop, run in a separate thread
                 import concurrent.futures
-                
+
                 def run_production_async():
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
@@ -260,13 +273,13 @@ def lambda_handler(event, context):
                         return loop.run_until_complete(execute_with_production_start(event, run_id, stage))
                     finally:
                         loop.close()
-                
+
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(run_production_async)
-                    execution_flow, flow, state = future.result()
+                    execution_flow, flow, state, is_schedule = future.result()
             except RuntimeError:
                 # No running loop, we can use asyncio.run
-                execution_flow, flow, state = asyncio.run(execute_with_production_start(event, run_id, stage))
+                execution_flow, flow, state, is_schedule = asyncio.run(execute_with_production_start(event, run_id, stage))
             print('request_id: ', context.aws_request_id)
 
             last_http_response = next(
@@ -354,14 +367,28 @@ def lambda_handler(event, context):
                     'run_end'
                 )
 
-            logger.error("Error: No valid HttpResponse node found. Make sure the flow leads to a response. 500 Response given.")
-            return {
-                "statusCode": 500,
-                "body": json.dumps({
-                    "error": "No valid HttpResponse node found. Make sure the flow leads to a response.",
-                    "request_id": context.aws_request_id
-                })
-            }
+            # Handle missing HttpResponse based on execution type
+            if is_schedule:
+                # Schedules don't need HttpResponse nodes - return success
+                logger.info("Schedule execution completed successfully - no HttpResponse node required")
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "message": "Schedule executed successfully",
+                        "request_id": context.aws_request_id,
+                        "execution_type": "schedule"
+                    })
+                }
+            else:
+                # Routes require HttpResponse nodes
+                logger.error("Error: No valid HttpResponse node found. Make sure the flow leads to a response. 500 Response given.")
+                return {
+                    "statusCode": 500,
+                    "body": json.dumps({
+                        "error": "No valid HttpResponse node found. Make sure the flow leads to a response.",
+                        "request_id": context.aws_request_id
+                    })
+                }
 
     except ValueError as e:
         return {

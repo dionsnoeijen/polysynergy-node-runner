@@ -22,6 +22,7 @@ class Context:
         stage: str = 'mock',
         sub_stage: str = 'mock',
         execution_flow: dict[str, any] = None,
+        trigger_node_id: str = None,
     ):
         self.run_id = run_id
         self.node_setup_version_id = node_setup_version_id
@@ -34,6 +35,7 @@ class Context:
         self.stage = stage
         self.sub_stage = sub_stage
         self.execution_flow = execution_flow or {}
+        self.trigger_node_id = trigger_node_id
 
         # For secret resolution, the original values are stored,
         # so they can be placed back after execution

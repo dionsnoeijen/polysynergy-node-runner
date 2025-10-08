@@ -32,20 +32,5 @@ class ExecutionState:
 
         return current
 
-    def resolve_state_value(self, key: str):
-        parts = key.split(".")
-        handle = parts.pop(0)
-        node = self.get_node_by_handle(handle)
-        if not node:
-            return f"<missing node: {handle}>"
-
-        value = getattr(node, parts.pop(0), None)
-        for part in parts:
-            if isinstance(value, dict):
-                value = value.get(part, f"<missing key: {key}>")
-            else:
-                return f"<non-dict access on: {key}>"
-        return value
-
 def get_execution_state():
     return ExecutionState()
