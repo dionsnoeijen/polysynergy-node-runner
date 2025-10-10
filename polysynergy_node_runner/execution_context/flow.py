@@ -98,10 +98,28 @@ class Flow:
             handle = conn.target_handle
             handle_groups.setdefault(handle, []).append(conn)
 
-        for handle, conns in handle_groups.items():
-            if all(conn.is_killer() for conn in conns):
-                print('Killing node, ALL IN CONS ARE KILLER:', node.handle, node.__class__.__name__)
+        # GroupNodes have path-routing semantics (true_path/false_path are mutually exclusive)
+        # They should execute if AT LEAST ONE path is available
+        # Regular nodes should be killed if ANY required input is completely missing
+        is_group_node = "GroupNode" in node.__class__.__name__
+
+        if is_group_node:
+            # For GroupNodes: only kill if ALL handle groups have all killers
+            # This allows execution when at least one path is alive
+            all_groups_killed = all(
+                all(conn.is_killer() for conn in conns)
+                for handle, conns in handle_groups.items()
+            )
+            if all_groups_killed:
+                print('Killing node, ALL HANDLE GROUPS ARE KILLERS:', node.handle, node.__class__.__name__)
                 return True
+        else:
+            # For regular nodes: kill if ANY handle group has all killers
+            # This prevents execution when any required input is missing
+            for handle, conns in handle_groups.items():
+                if all(conn.is_killer() for conn in conns):
+                    print('Killing node, ALL IN CONS ARE KILLER:', node.handle, node.__class__.__name__)
+                    return True
 
         return False
 
