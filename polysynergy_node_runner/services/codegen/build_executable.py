@@ -195,6 +195,164 @@ async def execute_with_production_start(event=None, run_id:str=None, stage:str=N
 
     return execution_flow, flow, state, is_schedule""")
 
+    code_parts.append("""\n
+async def execute_with_resume(run_id: str, resume_node_id: str, user_input: dict):
+    \"\"\"
+    Resume a paused flow from a Human-in-the-Loop node.
+
+    Args:
+        run_id: The existing run_id to resume (must match paused execution)
+        resume_node_id: The node ID to resume from (typically the HIL node)
+        user_input: Dict with user response data (e.g., {"user_response": "yes"})
+
+    Returns:
+        execution_flow dict with execution results
+    \"\"\"
+    print(f"[RESUME] Starting resume for run_id={run_id}, node={resume_node_id}")
+
+    # Check if there's a listener and send resume_start event
+    has_listener = active_listeners_service.has_listener(NODE_SETUP_VERSION_ID)
+    if has_listener:
+        send_flow_event(
+            NODE_SETUP_VERSION_ID,
+            run_id,
+            None,
+            'resume_start'
+        )
+        print(f"[RESUME] Sent resume_start event")
+
+    # Get all previous node states from DynamoDB
+    nodes_state = storage.get_all_nodes_for_run(NODE_SETUP_VERSION_ID, run_id)
+    print(f"[RESUME] Found {len(nodes_state)} nodes with saved state")
+
+    if not nodes_state:
+        raise ValueError(f"No saved state found for run_id {run_id}")
+
+    # Check if this flow was already resumed by checking if resume node already has user_response
+    resume_node_state = next((ns for ns in nodes_state if ns['node_id'] == resume_node_id), None)
+    if resume_node_state:
+        existing_user_response = resume_node_state['data'].get('variables', {}).get('user_response')
+        if existing_user_response:
+            print(f"[RESUME] Flow already resumed - user_response already set to: {existing_user_response}")
+            raise ValueError(f"Flow {run_id} was already resumed. Cannot resume twice.")
+
+    # Get stage/sub_stage from first node to preserve execution context
+    first_node_data = nodes_state[0]['data'] if nodes_state else {}
+    original_stage = "mock"  # Default
+    original_sub_stage = "mock"  # Default
+
+    # Try to extract from execution metadata if available
+    # (We'll improve this later if stage/sub_stage needs to be stored explicitly)
+
+    # Create execution environment WITHOUT clearing previous execution
+    # We need the old state to reconstruct!
+    flow, execution_flow, state = create_execution_environment(
+        run_id=run_id,
+        stage=original_stage,
+        sub_stage=original_sub_stage,
+        trigger_node_id=resume_node_id
+    )
+
+    print(f"[RESUME] Created execution environment with {len(state.nodes)} fresh nodes")
+
+    # Reconstruct the execution_flow.nodes_order from previous execution
+    # This ensures the UI shows the complete execution history
+    # Note: We exclude the resume node itself as it will be re-executed and added again
+    for node_state in nodes_state:
+        # Skip the resume node - it will be executed again with updated user_input
+        if node_state['node_id'] == resume_node_id:
+            continue
+
+        node_data = node_state['data']
+        execution_flow['nodes_order'].append({
+            'id': node_state['node_id'],
+            'handle': node_data.get('handle', ''),
+            'type': node_data.get('type', ''),
+            'order': node_state['order'],
+            'variables': node_data.get('variables', {}),
+            'error': node_data.get('error'),
+            'error_type': node_data.get('error_type'),
+            'killed': node_data.get('killed', False),
+            'processed': node_data.get('processed', False)
+        })
+
+    # Find the highest order number to continue from
+    max_order = max((ns['order'] for ns in nodes_state), default=-1)
+    print(f"[RESUME] Reconstructed {len(execution_flow['nodes_order'])} nodes in execution_flow, max_order={max_order}")
+
+    # Map all saved state back onto the nodes
+    for node_state in nodes_state:
+        node_id = node_state['node_id']
+        node = state.get_node_by_id(node_id)
+
+        if not node:
+            print(f"[RESUME] Warning: Node {node_id} not found in state, skipping")
+            continue
+
+        # Restore all variables from saved state
+        variables = node_state['data'].get('variables', {})
+        for var_name, var_value in variables.items():
+            if hasattr(node, var_name):
+                try:
+                    setattr(node, var_name, var_value)
+                except Exception as e:
+                    print(f"[RESUME] Warning: Could not set {var_name} on {node_id}: {e}")
+
+        # Mark node as processed if it was completed
+        if node_state['data'].get('processed'):
+            node._processed = True
+            print(f"[RESUME] Marked {node.handle} as processed")
+
+    # Apply user input to the resume node
+    resume_node = state.get_node_by_id(resume_node_id)
+    if not resume_node:
+        raise ValueError(f"Resume node {resume_node_id} not found")
+
+    print(f"[RESUME] Applying user input to {resume_node.handle}: {user_input}")
+    for key, value in user_input.items():
+        if hasattr(resume_node, key):
+            setattr(resume_node, key, value)
+
+    # IMPORTANT: Mark resume node as NOT processed so it executes again
+    resume_node._processed = False
+
+    # Restore connection state
+    stored_connections = storage.get_connections_result(NODE_SETUP_VERSION_ID, run_id)
+    if stored_connections:
+        print(f"[RESUME] Restoring {len(stored_connections)} connection states")
+        for conn_data in stored_connections:
+            # Find connection by UUID
+            conn = next((c for c in state.connections if c.uuid == conn_data.get('uuid')), None)
+            if conn and conn_data.get('is_killer'):
+                conn.make_killer()
+
+    print(f"[RESUME] Starting execution from {resume_node.handle}")
+
+    # Execute from the resume node
+    await flow.execute_node(resume_node)
+
+    # Store updated connections
+    storage.store_connections_result(
+        flow_id=NODE_SETUP_VERSION_ID,
+        run_id=run_id,
+        connections=[c.to_dict() for c in state.connections],
+    )
+
+    print(f"[RESUME] Resume complete, executed {len(execution_flow.get('nodes_order', []))} new nodes")
+
+    # Send resume_end event
+    if has_listener:
+        send_flow_event(
+            NODE_SETUP_VERSION_ID,
+            run_id,
+            None,
+            'resume_end'
+        )
+        print(f"[RESUME] Sent resume_end event")
+
+    return execution_flow
+""")
+
     code_parts.append("""\nimport json
 
 def lambda_handler(event, context):
@@ -209,6 +367,40 @@ def lambda_handler(event, context):
 
 
     try:
+        # Check if this is a resume request for Human-in-the-Loop
+        is_resume = event.get("resume", False)
+        if is_resume:
+            resume_node_id = event.get("resume_node_id")
+            user_input = event.get("user_input", {})
+
+            if not resume_node_id:
+                return {
+                    "statusCode": 400,
+                    "body": json.dumps({"error": "resume_node_id is required for resume requests"})
+                }
+
+            if not run_id:
+                return {
+                    "statusCode": 400,
+                    "body": json.dumps({"error": "run_id is required for resume requests"})
+                }
+
+            print(f"[HIL] Resuming flow: run_id={run_id}, node={resume_node_id}")
+
+            # Execute the resume
+            execution_flow = asyncio.run(execute_with_resume(run_id, resume_node_id, user_input))
+
+            print(f"[HIL] Resume completed successfully")
+
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "message": "Flow resumed successfully",
+                    "run_id": run_id,
+                    "execution_flow": execution_flow
+                })
+            }
+
         # Is this a mock run triggered from the user interface?
         # in that case, it should start with the node_id that is provided.
         is_ui_mock = stage == "mock" and node_id is not None
