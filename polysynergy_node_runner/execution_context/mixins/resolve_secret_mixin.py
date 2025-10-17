@@ -36,11 +36,15 @@ class ResolveSecretMixin:
                 continue
             val = getattr(self, attr_name, None)
             if isinstance(val, str):
-                if not val.startswith("<secret:"):
+                if "<secret:" not in val:
                     continue
                 replaced = self._replace_secret_placeholders(data=val)
-
                 setattr(self, attr_name, replaced)
+            elif isinstance(val, dict):
+                # Process dict values for secrets (mutate in place)
+                for k, v in val.items():
+                    if isinstance(v, str) and "<secret:" in v:
+                        val[k] = self._replace_secret_placeholders(v)
 
         if not self.__class__.__name__.startswith("VariableSecret"):
             return

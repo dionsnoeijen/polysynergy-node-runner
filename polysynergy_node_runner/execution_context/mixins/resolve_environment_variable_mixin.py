@@ -10,7 +10,7 @@ class ResolveEnvironmentVariableMixin:
 
     def _replace_environment_placeholders(self, data: str) -> str:
 
-        ENV_PATTERN = re.compile(r"<environment:([a-zA-Z0-9_\-]+)>")
+        ENV_PATTERN = re.compile(r"<(?:environment|env):([a-zA-Z0-9_\-]+)>")
 
         def replacer(match):
             env_key = match.group(1)
@@ -29,13 +29,13 @@ class ResolveEnvironmentVariableMixin:
         return ENV_PATTERN.sub(replacer, data)
 
     def _resolve_environment_variable(self):
-        # Handle string attributes that may contain <environment:key> pattern
+        # Handle string attributes that may contain <environment:key> or <env:key> pattern
         for attr_name in getattr(type(self), '__annotations__', {}):
             if attr_name.startswith("_"):
                 continue
             val = getattr(self, attr_name, None)
             if isinstance(val, str):
-                if "<environment:" not in val:
+                if "<environment:" not in val and "<env:" not in val:
                     continue
                 replaced = self._replace_environment_placeholders(data=val)
                 setattr(self, attr_name, replaced)
