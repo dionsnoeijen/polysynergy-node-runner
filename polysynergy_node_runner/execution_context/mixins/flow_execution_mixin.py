@@ -124,15 +124,15 @@ class FlowExecutionMixin:
             sub_stage=self.context.sub_stage
         )
 
-        if hasattr(self, 'true_path') and not self.true_path:
+        if hasattr(self, 'true_path') and self.true_path is False:
             for connection in self.get_out_connections_on_true_path():
                 connection.make_killer()
 
-        if hasattr(self, 'false_path') and not self.false_path:
+        if hasattr(self, 'false_path') and self.false_path is False:
             for connection in self.get_out_connections_on_false_path():
                 connection.make_killer()
 
-        if hasattr(self, 'false_path') and self.false_path:
+        if hasattr(self, 'false_path') and self.false_path is not False:
             for connection in self.get_out_connections_except_on_false_path():
                 connection.make_killer()
 
