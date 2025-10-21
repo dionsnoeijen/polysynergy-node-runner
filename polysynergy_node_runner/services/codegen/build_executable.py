@@ -196,14 +196,14 @@ async def execute_with_production_start(event=None, run_id:str=None, stage:str=N
     return execution_flow, flow, state, is_schedule""")
 
     code_parts.append("""\n
-async def execute_with_resume(run_id: str, resume_node_id: str, user_input: dict):
+async def execute_with_resume(run_id: str, resume_node_id: str, user_input):
     \"\"\"
     Resume a paused flow from a Human-in-the-Loop node.
 
     Args:
         run_id: The existing run_id to resume (must match paused execution)
         resume_node_id: The node ID to resume from (typically the HIL node)
-        user_input: Dict with user response data (e.g., {"user_response": "yes"})
+        user_input: User response data - dict for structured input, bool for confirmation
 
     Returns:
         execution_flow dict with execution results
@@ -309,9 +309,22 @@ async def execute_with_resume(run_id: str, resume_node_id: str, user_input: dict
         raise ValueError(f"Resume node {resume_node_id} not found")
 
     print(f"[RESUME] Applying user input to {resume_node.handle}: {user_input}")
-    for key, value in user_input.items():
-        if hasattr(resume_node, key):
-            setattr(resume_node, key, value)
+
+    # Handle both dict and bool user_input
+    if isinstance(user_input, dict):
+        # Dict: loop through and set each key/value
+        for key, value in user_input.items():
+            if hasattr(resume_node, key):
+                setattr(resume_node, key, value)
+    elif isinstance(user_input, bool):
+        # Boolean: set user_input_data directly (for AgnoAgent HITL confirmation)
+        if hasattr(resume_node, 'user_input_data'):
+            setattr(resume_node, 'user_input_data', user_input)
+            print(f"[RESUME] Set user_input_data={user_input} for HITL confirmation")
+    else:
+        # Fallback: try to set as user_response for old HITL nodes
+        if hasattr(resume_node, 'user_response'):
+            setattr(resume_node, 'user_response', str(user_input))
 
     # IMPORTANT: Mark resume node as NOT processed so it executes again
     resume_node._processed = False

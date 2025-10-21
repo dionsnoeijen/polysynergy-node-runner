@@ -28,12 +28,13 @@ def dock_property(
         "placeholder": placeholder,
     }
 
-def dock_code_editor(enabled: bool = True, info: str = ""):
+def dock_code_editor(enabled: bool = True, info: str = "", metadata: dict | None = None):
     return {
         "has_dock": True,
         "enabled": enabled,
         "code_editor": True,
         "info": info,
+        "metadata": metadata or {},
     }
 
 def dock_switch(enabled: bool = True, info: str = ""):

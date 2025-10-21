@@ -9,7 +9,8 @@ class ResolveSecretMixin:
 
     def _replace_secret_placeholders(self, data: str) -> str:
 
-        SECRET_PATTERN = re.compile(r"<secret:([a-zA-Z0-9_\-]+)>")
+        # Support both <secret:...> and <sec:...> patterns
+        SECRET_PATTERN = re.compile(r"<sec(?:ret)?:([a-zA-Z0-9_\-]+)>")
 
         def replacer(match):
             secret_key = match.group(1)
@@ -36,14 +37,15 @@ class ResolveSecretMixin:
                 continue
             val = getattr(self, attr_name, None)
             if isinstance(val, str):
-                if "<secret:" not in val:
+                # Check for both <secret:...> and <sec:...> patterns
+                if "<secret:" not in val and "<sec:" not in val:
                     continue
                 replaced = self._replace_secret_placeholders(data=val)
                 setattr(self, attr_name, replaced)
             elif isinstance(val, dict):
                 # Process dict values for secrets (mutate in place)
                 for k, v in val.items():
-                    if isinstance(v, str) and "<secret:" in v:
+                    if isinstance(v, str) and ("<secret:" in v or "<sec:" in v):
                         val[k] = self._replace_secret_placeholders(v)
 
         if not self.__class__.__name__.startswith("VariableSecret"):
