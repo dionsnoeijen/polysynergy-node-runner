@@ -8,9 +8,15 @@ def build_group_nodes_code(conns_data: list, groups_with_output: set) -> str:
     for conn in conns_data:
         tgt_node = conn.get("targetNodeId")
         tgt_group = conn.get("targetGroupId")
+        is_in_group = conn.get("isInGroup")
 
+        # Match connections to group boundaries in two ways:
+        # 1. Classic: targetNodeId == targetGroupId (both set)
+        # 2. Nested groups: targetNodeId == isInGroup (targetGroupId not set)
         if tgt_node and tgt_group and tgt_node == tgt_group:
             group_conn_map[tgt_group].append(conn)
+        elif tgt_node and is_in_group and tgt_node == is_in_group:
+            group_conn_map[is_in_group].append(conn)
 
     lines = []
 
