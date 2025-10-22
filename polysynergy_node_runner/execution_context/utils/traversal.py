@@ -115,3 +115,41 @@ def find_node_by_handle_backwards(
             return node
 
     return None
+
+
+def find_connected_component(start_node_id: str, connections: list) -> set:
+    """
+    Find ALL nodes that are reachable from start_node_id via any connections,
+    traversing both forward (source -> target) and backward (target -> source).
+
+    This creates the complete connected component in the graph, ensuring only
+    nodes that are actually part of the execution flow are included.
+
+    Args:
+        start_node_id: The ID of the starting node (mock node or entry point)
+        connections: List of all connections in the canvas
+
+    Returns:
+        Set of node IDs that are connected to the start node
+    """
+    connected = {start_node_id}
+    to_visit = [start_node_id]
+
+    while to_visit:
+        current_id = to_visit.pop()
+
+        # Check all connections for bidirectional connectivity
+        for conn in connections:
+            # Forward connection: current -> target
+            if conn.source_node_id == current_id:
+                if conn.target_node_id not in connected:
+                    connected.add(conn.target_node_id)
+                    to_visit.append(conn.target_node_id)
+
+            # Backward connection: source -> current
+            elif conn.target_node_id == current_id:
+                if conn.source_node_id not in connected:
+                    connected.add(conn.source_node_id)
+                    to_visit.append(conn.source_node_id)
+
+    return connected

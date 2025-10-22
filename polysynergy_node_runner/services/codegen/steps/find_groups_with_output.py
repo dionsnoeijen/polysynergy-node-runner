@@ -19,7 +19,6 @@ def find_groups_with_output(conns_data):
             and source_node != source_group
         ):
             groups_with_output.add(source_group)
-            print(f"[GROUPS_WITH_OUTPUT] Scenario 1 matched - added {source_group}")
 
         # een parent group heeft ook output als een nested group naar de boundary stuurt:
         # Scenario 1: targetGroupId is expliciet gezet
@@ -29,7 +28,6 @@ def find_groups_with_output(conns_data):
             and target_node == target_group
         ):
             groups_with_output.add(target_group)
-            print(f"[GROUPS_WITH_OUTPUT] Scenario 2 matched - added {target_group}")
 
         # Scenario 2: connection naar group boundary (targetNodeId == isInGroup)
         # Dit gebeurt als een nested group connect naar zijn parent group boundary
@@ -40,8 +38,5 @@ def find_groups_with_output(conns_data):
             and source_group != is_in_group
         ):
             groups_with_output.add(is_in_group)
-            print(f"[GROUPS_WITH_OUTPUT] Scenario 3 matched - added {is_in_group}")
-            print(f"  Connection details: isInGroup={is_in_group}, targetNode={target_node}, sourceGroup={source_group}")
 
-    print(f"[GROUPS_WITH_OUTPUT] Final result: {groups_with_output}")
     return groups_with_output

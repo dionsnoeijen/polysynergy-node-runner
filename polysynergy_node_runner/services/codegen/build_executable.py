@@ -60,7 +60,7 @@ def generate_code_from_json(json_data, id):
     path_version_map = {}
 
     for nd in nodes_data:
-        if nd.get("type") in ["group"]:
+        if nd.get("type") in ["group", "warp_gate"]:
             continue
         path = nd["path"]
         version = nd.get("version", 0.0)

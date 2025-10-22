@@ -86,8 +86,28 @@ def discover_node_code(node_data: dict) -> str:
 
 def build_nodes_code(nodes: list, groups_with_output: set):
     lines = []
+
+    # Add import for find_connected_component at the top of node building section
+    lines.append("        from polysynergy_node_runner.execution_context.utils.traversal import find_connected_component")
+    lines.append("")
+    lines.append("        # Determine which nodes are connected to the execution flow")
+    lines.append("        # Only register nodes that are reachable from trigger_node_id")
+    lines.append("        if trigger_node_id:")
+    lines.append("            connected_node_ids = find_connected_component(trigger_node_id, connections)")
+    lines.append("        else:")
+    lines.append("            # No trigger_node_id means register all nodes (backward compatibility)")
+    lines.append("            connected_node_ids = None")
+    lines.append("")
+
     for nd in nodes:
-        is_group = nd.get("type") == "group"
+        node_type = nd.get("type")
+        is_group = node_type == "group"
+        is_warp_gate = node_type == "warp_gate"
+
+        # Skip warp gates entirely (frontend-only visual nodes)
+        if is_warp_gate:
+            continue
+
         # If it's a group that has no output, skip it.
         if is_group and nd["id"] not in groups_with_output:
             continue
@@ -184,8 +204,10 @@ def build_nodes_code(nodes: list, groups_with_output: set):
         lines.append(f"{var_name}.set_out_connections(get_out_connections(connections, '{nd['id']}'))")
         lines.append(f"            return {var_name.strip()}")
 
-        lines.append(
-            f"\n        if mock or '{nd['category']}' != 'mock': state.register_node(make_{var_name.strip()}_instance(node_context))")
+        # Register node only if it's connected to the execution flow (or if no filtering is enabled)
+        lines.append(f"\n        if mock or '{nd['category']}' != 'mock':")
+        lines.append(f"            if connected_node_ids is None or '{nd['id']}' in connected_node_ids:")
+        lines.append(f"                state.register_node(make_{var_name.strip()}_instance(node_context))")
         lines.append(f"\n")
 
     return "\n".join(lines)

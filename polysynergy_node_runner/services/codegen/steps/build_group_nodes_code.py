@@ -66,13 +66,11 @@ def build_group_nodes_code(conns_data: list, groups_with_output: set) -> str:
             group_lines.append(f"        pass")
         else:
             # Debug: print property values
-            group_lines.append(f"        print(f'[GroupNode DEBUG] Properties before mirroring:')")
             for prefix, props in sorted(prefix_props.items()):
                 for path_type, prop_name in props.items():
                     group_lines.append(f"        print(f'  {prop_name} = {{self.{prop_name}}}')")
 
             # Debug: print incoming connection states
-            group_lines.append(f"        print(f'[GroupNode DEBUG] Incoming connections:')")
             group_lines.append(f"        for in_conn in self.get_in_connections():")
             group_lines.append(f"            print(f'  {{in_conn.source_handle}} -> {{in_conn.target_handle}}, killer={{in_conn.is_killer()}}')")
 
@@ -83,10 +81,8 @@ def build_group_nodes_code(conns_data: list, groups_with_output: set) -> str:
             group_lines.append(f"            if in_conn.is_killer():")
             group_lines.append(f"                # Incoming connection was killed, mirror this to outgoing connections")
             group_lines.append(f"                target_handle = in_conn.target_handle")
-            group_lines.append(f"                print(f'[GroupNode DEBUG] Mirroring killer: {{target_handle}}')")
             group_lines.append(f"                for out_conn in self.get_out_connections():")
             group_lines.append(f"                    if out_conn.source_handle == target_handle:")
-            group_lines.append(f"                        print(f'[GroupNode DEBUG] Killing outgoing: {{out_conn.source_handle}} -> {{out_conn.target_node_id}}')")
             group_lines.append(f"                        out_conn.make_killer()")
 
             # Add logic to handle error cases (false_path is truthy)
@@ -97,14 +93,12 @@ def build_group_nodes_code(conns_data: list, groups_with_output: set) -> str:
                 if false_path_prop:
                     # If false_path has an error value (truthy), kill all except false_path
                     group_lines.append(f"        if self.{false_path_prop}:")
-                    group_lines.append(f"            print(f'[GroupNode DEBUG] {false_path_prop} is truthy (error), killing all except {false_path_prop}')")
                     group_lines.append(f"            for connection in [c for c in self.get_out_connections() if c.source_handle != '{false_path_prop}']:")
                     group_lines.append(f"                connection.make_killer()")
 
                 if true_path_prop:
                     # If true_path is explicitly False (not None), kill those connections
                     group_lines.append(f"        if self.{true_path_prop} is False:")
-                    group_lines.append(f"            print(f'[GroupNode DEBUG] {true_path_prop} is False, killing those connections')")
                     group_lines.append(f"            for connection in [c for c in self.get_out_connections() if c.source_handle == '{true_path_prop}']:")
                     group_lines.append(f"                connection.make_killer()")
 
