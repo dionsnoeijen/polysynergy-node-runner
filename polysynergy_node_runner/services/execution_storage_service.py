@@ -541,6 +541,13 @@ class DynamoDbExecutionStorageService:
         except Exception as e:
             print(f"upsert_node_fields get_item error: {e}")
 
+        # Guard: Don't create new records via upsert - only update existing ones
+        # This prevents creating incomplete records when tool hooks try to store results
+        # before the node has been executed via state_execute()
+        if not current:
+            print(f"⚠️  upsert_node_fields: No existing record for node {node_id} (order={order}), skipping upsert to prevent incomplete record creation")
+            return
+
         # 2) merge patch
         merged = deepcopy(current) if isinstance(current, dict) else {}
         for k, v in (patch or {}).items():
