@@ -369,6 +369,13 @@ async def execute_with_resume(run_id: str, resume_node_id: str, user_input):
     code_parts.append("""\nimport json
 
 def lambda_handler(event, context):
+    # Check for warmup ping - return immediately without executing anything
+    if event.get("warmup") == True:
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"message": "Lambda warmed up"})
+        }
+
     stage = event.get("stage", "mock")
     sub_stage = event.get("sub_stage", "mock")
     node_id = event.get("node_id")
