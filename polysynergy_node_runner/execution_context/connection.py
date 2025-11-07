@@ -24,7 +24,9 @@ class Connection:
         self._touched = True
 
     def make_killer(self):
-        print("Making killer", self.uuid)
+        source = self.get_source_node()
+        target = self.get_target_node()
+        print(f"Making killer {self.uuid}: {source.handle if source else '?'}.{self.source_handle} -> {target.handle if target else '?'}.{self.target_handle}")
         self._killer = True
 
     def resurrect(self):

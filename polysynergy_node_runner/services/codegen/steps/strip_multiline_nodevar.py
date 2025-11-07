@@ -14,8 +14,9 @@ def strip_multiline_nodevar(lines):
     def flush_buffer():
         full = "\n".join(buffer)
         full = re.sub(r'dock_property\s*\([^)]*\)', '', full, flags=re.DOTALL)
-        # Match lists [..] or simple values (multiline version)
-        mdef = re.search(r'default\s*=\s*(\[[^\]]*\]|[^,\)\n]+)', full, re.DOTALL)
+        # Match lists [..], quoted strings (single or double), or simple values (multiline version)
+        # Priority: 1) lists, 2) double-quoted strings, 3) single-quoted strings, 4) simple values
+        mdef = re.search(r'default\s*=\s*(\[[^\]]*\]|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|[^,\)\n]+)', full, re.DOTALL)
         if mdef:
             df = mdef.group(1).strip()
         else:

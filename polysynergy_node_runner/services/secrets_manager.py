@@ -12,6 +12,7 @@ class SecretsManager:
         is_lambda = execution_env.lower().startswith("aws_lambda")
         is_explicit = bool(access_key and secret_key and not is_lambda)
 
+        # Initialize Secrets Manager client (for fallback)
         if is_explicit:
             self.client = boto3.client(
                 "secretsmanager",
@@ -20,8 +21,19 @@ class SecretsManager:
                 aws_secret_access_key=secret_key,
                 aws_session_token=os.getenv("AWS_SESSION_TOKEN")
             )
+            # Initialize DynamoDB client with same credentials
+            self.dynamodb = boto3.client(
+                "dynamodb",
+                region_name=region,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=os.getenv("AWS_SESSION_TOKEN")
+            )
         else:
             self.client = boto3.client("secretsmanager", region_name=region)
+            self.dynamodb = boto3.client("dynamodb", region_name=region)
+
+        self.dynamodb_table = os.getenv("SECRETS_TABLE_NAME", "project_secrets")
 
     def _prefix_name(self, name: str, project_id: str, stage: str | None = None) -> str:
         if stage:
@@ -31,16 +43,25 @@ class SecretsManager:
     def create_secret(self, name: str, secret_value: str, project_id: str, stage: str) -> dict:
         full_name = self._prefix_name(name, project_id, stage)
         try:
-            kwargs = {
-                "Name": full_name,
-                "SecretString": secret_value,
-                "Tags": [
-                    {"Key": "project", "Value": project_id},
-                    {"Key": "stage", "Value": stage}
-                ]
+            # Write to DynamoDB (new primary storage)
+            self.dynamodb.put_item(
+                TableName=self.dynamodb_table,
+                Item={
+                    'secret_key': {'S': full_name},
+                    'secret_value': {'S': secret_value},
+                    'project_id': {'S': project_id},
+                    'stage': {'S': stage},
+                    'created_at': {'S': '2025-11-03T06:45:00Z'}
+                }
+            )
+
+            # Return success response in same format as Secrets Manager
+            return {
+                'ARN': f'dynamodb:{full_name}',
+                'Name': full_name,
+                'VersionId': 'v1'
             }
-            return self.client.create_secret(**kwargs)
-        except ClientError as e:
+        except Exception as e:
             raise e
 
     def get_secret_by_key(self, key: str, project_id: str, stage: str) -> dict:
@@ -48,6 +69,30 @@ class SecretsManager:
         return self.get_secret(full_name)
 
     def get_secret(self, secret_id: str) -> dict:
+        # Try DynamoDB first (cheap!)
+        try:
+            response = self.dynamodb.get_item(
+                TableName=self.dynamodb_table,
+                Key={'secret_key': {'S': secret_id}}
+            )
+
+            if 'Item' in response:
+                secret_value = response['Item'].get('secret_value', {}).get('S')
+
+                full_key = secret_id
+                if "@" in full_key:
+                    key = full_key.split("@", 1)[1]
+                else:
+                    key = full_key
+
+                return {
+                    "key": key,
+                    "value": secret_value
+                }
+        except Exception as e:
+            print(f"DynamoDB read failed for {secret_id}, falling back to Secrets Manager: {e}")
+
+        # Fallback to AWS Secrets Manager
         try:
             response = self.client.get_secret_value(SecretId=secret_id)
 
@@ -67,61 +112,81 @@ class SecretsManager:
 
     def update_secret(self, secret_id: str, secret_value: str) -> dict:
         try:
-            response = self.client.update_secret(
-                SecretId=secret_id,
-                SecretString=secret_value
+            # Update in DynamoDB
+            self.dynamodb.update_item(
+                TableName=self.dynamodb_table,
+                Key={'secret_key': {'S': secret_id}},
+                UpdateExpression='SET secret_value = :val',
+                ExpressionAttributeValues={':val': {'S': secret_value}}
             )
-            return response
-        except ClientError as e:
+
+            return {
+                'ARN': f'dynamodb:{secret_id}',
+                'Name': secret_id,
+                'VersionId': 'v2'
+            }
+        except Exception as e:
             raise e
 
     def update_secret_by_key(self, key: str, new_value: str, project_id: str, stage: str) -> dict:
         full_name = self._prefix_name(key, project_id, stage)
-        try:
-            return self.client.update_secret(
-                SecretId=full_name,
-                SecretString=new_value
-            )
-        except ClientError as e:
-            raise e
+        return self.update_secret(full_name, new_value)
 
     def delete_secret(self, secret_id: str, force_delete_without_recovery: bool = True) -> dict:
         try:
-            response = self.client.delete_secret(
-                SecretId=secret_id,
-                ForceDeleteWithoutRecovery=force_delete_without_recovery
+            # Delete from DynamoDB
+            self.dynamodb.delete_item(
+                TableName=self.dynamodb_table,
+                Key={'secret_key': {'S': secret_id}}
             )
-            return response
-        except ClientError as e:
+
+            return {
+                'ARN': f'dynamodb:{secret_id}',
+                'Name': secret_id,
+                'DeletionDate': '2025-11-03T06:45:00Z'
+            }
+        except Exception as e:
             raise e
 
     def delete_secret_by_key(self, key: str, project_id: str, stage: str, force_delete_without_recovery: bool = True) -> dict:
         full_name = self._prefix_name(key, project_id, stage)
-        try:
-            return self.client.delete_secret(
-                SecretId=full_name,
-                ForceDeleteWithoutRecovery=force_delete_without_recovery
-            )
-        except ClientError as e:
-            raise e
+        return self.delete_secret(full_name, force_delete_without_recovery)
 
     def list_secrets(self, project_id: str) -> list:
         try:
-            response = self.client.list_secrets(
-                Filters=[
-                    {
-                        'Key': 'tag-key',
-                        'Values': ['project']
-                    },
-                    {
-                        'Key': 'tag-value',
-                        'Values': [project_id]
-                    }
-                ]
+            # Scan DynamoDB for all secrets with this project_id
+            response = self.dynamodb.scan(
+                TableName=self.dynamodb_table,
+                FilterExpression='project_id = :pid',
+                ExpressionAttributeValues={':pid': {'S': project_id}}
             )
-            return response.get("SecretList", [])
-        except ClientError as e:
-            raise e
+
+            # Convert DynamoDB format to Secrets Manager format
+            secrets = []
+            for item in response.get('Items', []):
+                secrets.append({
+                    'Name': item.get('secret_key', {}).get('S', ''),
+                    'ARN': f"dynamodb:{item.get('secret_key', {}).get('S', '')}",
+                    'Tags': [
+                        {'Key': 'project', 'Value': project_id},
+                        {'Key': 'stage', 'Value': item.get('stage', {}).get('S', '')}
+                    ]
+                })
+
+            return secrets
+        except Exception as e:
+            print(f"DynamoDB list failed, falling back to Secrets Manager: {e}")
+            # Fallback to Secrets Manager
+            try:
+                response = self.client.list_secrets(
+                    Filters=[
+                        {'Key': 'tag-key', 'Values': ['project']},
+                        {'Key': 'tag-value', 'Values': [project_id]}
+                    ]
+                )
+                return response.get("SecretList", [])
+            except ClientError as e:
+                raise e
 
 def get_secrets_manager() -> SecretsManager:
     region = os.getenv("AWS_REGION") or "eu-central-1"

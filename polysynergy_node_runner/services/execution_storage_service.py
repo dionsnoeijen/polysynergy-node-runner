@@ -336,27 +336,35 @@ class DynamoDbExecutionStorageService:
                 if '#' in sk:
                     parts = sk.split('#')
                     run_id = parts[0]
-                    
+
                     # Track run IDs and extract metadata
                     if run_id not in runs_metadata:
                         runs_metadata[run_id] = {
                             "run_id": run_id,
-                            "timestamp": run_id  # Default fallback
+                            "timestamp": run_id,  # Default fallback
+                            "stage": "mock",  # Default fallback
+                            "sub_stage": "mock"  # Default fallback
                         }
-                    
-                    # If this is a node result (not connections/mock_nodes), extract timestamp and run_number
-                    if (len(parts) >= 3 and 
-                        'connections' not in sk and 
-                        'mock_nodes' not in sk and 
+
+                    # If this is a node result (not connections/mock_nodes), extract metadata including stage
+                    if (len(parts) >= 5 and
+                        'connections' not in sk and
+                        'mock_nodes' not in sk and
                         'data' in item):
                         try:
+                            # Extract stage and sub_stage from SK: run_id#node_id#order#stage#sub_stage
+                            stage = parts[3]
+                            sub_stage = parts[4]
+                            runs_metadata[run_id]["stage"] = stage
+                            runs_metadata[run_id]["sub_stage"] = sub_stage
+
                             data = json.loads(item.get('data', '{}'))
                             if 'timestamp' in data:
                                 runs_metadata[run_id]["timestamp"] = data["timestamp"]
                             if 'run_number' in data:
                                 runs_metadata[run_id]["run_number"] = data["run_number"]
-                        except (json.JSONDecodeError, KeyError):
-                            pass  # Keep default timestamp if parsing fails
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            pass  # Keep default values if parsing fails
             
             # Handle pagination efficiently
             while 'LastEvaluatedKey' in response:
@@ -369,24 +377,32 @@ class DynamoDbExecutionStorageService:
                     if '#' in sk:
                         parts = sk.split('#')
                         run_id = parts[0]
-                        
+
                         if run_id not in runs_metadata:
                             runs_metadata[run_id] = {
                                 "run_id": run_id,
-                                "timestamp": run_id
+                                "timestamp": run_id,
+                                "stage": "mock",
+                                "sub_stage": "mock"
                             }
-                        
-                        if (len(parts) >= 3 and 
-                            'connections' not in sk and 
-                            'mock_nodes' not in sk and 
+
+                        if (len(parts) >= 5 and
+                            'connections' not in sk and
+                            'mock_nodes' not in sk and
                             'data' in item):
                             try:
+                                # Extract stage and sub_stage from SK
+                                stage = parts[3]
+                                sub_stage = parts[4]
+                                runs_metadata[run_id]["stage"] = stage
+                                runs_metadata[run_id]["sub_stage"] = sub_stage
+
                                 data = json.loads(item.get('data', '{}'))
                                 if 'timestamp' in data:
                                     runs_metadata[run_id]["timestamp"] = data["timestamp"]
                                 if 'run_number' in data:
                                     runs_metadata[run_id]["run_number"] = data["run_number"]
-                            except (json.JSONDecodeError, KeyError):
+                            except (json.JSONDecodeError, KeyError, IndexError):
                                 pass
             
             # Sort and return

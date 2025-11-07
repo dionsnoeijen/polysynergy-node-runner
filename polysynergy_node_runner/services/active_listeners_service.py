@@ -98,6 +98,12 @@ class ActiveListenersService:
             for item in response.get("Items", []):
                 batch.delete_item(Key={"PK": node_setup_version_id})
 
+        # Clear all cached entries for this node_setup_version_id
+        # Remove all cache keys that start with this version_id
+        keys_to_remove = [key for key in self._listener_cache.keys() if key.startswith(f"{node_setup_version_id}@")]
+        for key in keys_to_remove:
+            del self._listener_cache[key]
+
     def is_listener_valid(self, node_setup_version_id: str, max_age_minutes: int = 60) -> bool:
         response = self.table.query(
             KeyConditionExpression=Key("PK").eq(node_setup_version_id)
