@@ -26,18 +26,22 @@ class DynamoDbExecutionStorageService:
             and os.environ["AWS_EXECUTION_ENV"].lower().startswith("aws_lambda")
         )
         region = region or os.getenv("AWS_REGION", "eu-central-1")
+        local_endpoint = os.getenv("DYNAMODB_LOCAL_ENDPOINT")
 
-        if access_key and secret_key and not is_lambda:
-            self.dynamodb = boto3.resource(
-                "dynamodb",
-                region_name=region,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-                aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
-            )
-        else:
-            self.dynamodb = boto3.resource("dynamodb", region_name=region)
+        # Build DynamoDB resource config
+        dynamodb_config = {"region_name": region}
 
+        # Use local endpoint if configured (self-hosted mode)
+        if local_endpoint:
+            dynamodb_config["endpoint_url"] = local_endpoint
+            dynamodb_config["aws_access_key_id"] = "dummy"
+            dynamodb_config["aws_secret_access_key"] = "dummy"
+        elif access_key and secret_key and not is_lambda:
+            dynamodb_config["aws_access_key_id"] = access_key
+            dynamodb_config["aws_secret_access_key"] = secret_key
+            dynamodb_config["aws_session_token"] = os.getenv("AWS_SESSION_TOKEN")
+
+        self.dynamodb = boto3.resource("dynamodb", **dynamodb_config)
         self.table = self.dynamodb.Table(self.table_name)
 
     def clear_previous_execution(self, flow_id: str, current_run_id: str = None, *, max_runs_to_keep: int = 50, **extra_kwargs):

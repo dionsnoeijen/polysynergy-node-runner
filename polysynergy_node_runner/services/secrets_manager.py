@@ -1,13 +1,17 @@
 import os
+from typing import Optional
 
 import boto3
 from botocore.exceptions import ClientError
+from .encryption_service import get_encryption_service
+from cryptography.fernet import InvalidToken
 
 class SecretsManager:
     def __init__(self, access_key: str = None, secret_key: str = None, region: str = None):
         execution_env = os.getenv("AWS_EXECUTION_ENV", "")
+        local_endpoint = os.getenv("DYNAMODB_LOCAL_ENDPOINT")
 
-        print(f"Initializing SecretsManager with region: {region}, access_key: {'***' if access_key else 'None'}, execution_env: {execution_env}")
+        print(f"Initializing SecretsManager with region: {region}, access_key: {'***' if access_key else 'None'}, execution_env: {execution_env}, local_endpoint: {local_endpoint}")
 
         is_lambda = execution_env.lower().startswith("aws_lambda")
         is_explicit = bool(access_key and secret_key and not is_lambda)
@@ -22,18 +26,36 @@ class SecretsManager:
                 aws_session_token=os.getenv("AWS_SESSION_TOKEN")
             )
             # Initialize DynamoDB client with same credentials
-            self.dynamodb = boto3.client(
-                "dynamodb",
-                region_name=region,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-                aws_session_token=os.getenv("AWS_SESSION_TOKEN")
-            )
+            dynamodb_config = {
+                "region_name": region,
+                "aws_access_key_id": access_key,
+                "aws_secret_access_key": secret_key,
+                "aws_session_token": os.getenv("AWS_SESSION_TOKEN")
+            }
+            # Use local endpoint if configured
+            if local_endpoint:
+                dynamodb_config["endpoint_url"] = local_endpoint
+                dynamodb_config["aws_access_key_id"] = "dummy"
+                dynamodb_config["aws_secret_access_key"] = "dummy"
+
+            self.dynamodb = boto3.client("dynamodb", **dynamodb_config)
         else:
             self.client = boto3.client("secretsmanager", region_name=region)
-            self.dynamodb = boto3.client("dynamodb", region_name=region)
+            dynamodb_config = {"region_name": region}
+            if local_endpoint:
+                dynamodb_config["endpoint_url"] = local_endpoint
+                dynamodb_config["aws_access_key_id"] = "dummy"
+                dynamodb_config["aws_secret_access_key"] = "dummy"
+            self.dynamodb = boto3.client("dynamodb", **dynamodb_config)
 
         self.dynamodb_table = os.getenv("SECRETS_TABLE_NAME", "project_secrets")
+
+        # Initialize encryption service
+        try:
+            self.encryption = get_encryption_service()
+        except ValueError as e:
+            print(f"Warning: Encryption service not available: {e}")
+            self.encryption = None
 
     def _prefix_name(self, name: str, project_id: str, stage: str | None = None) -> str:
         if stage:
@@ -42,16 +64,28 @@ class SecretsManager:
 
     def create_secret(self, name: str, secret_value: str, project_id: str, stage: str) -> dict:
         full_name = self._prefix_name(name, project_id, stage)
+
+        # Encrypt secret value if encryption is available
+        encrypted_value = secret_value
+        is_encrypted = False
+        if self.encryption:
+            try:
+                encrypted_value = self.encryption.encrypt(secret_value)
+                is_encrypted = True
+            except Exception as e:
+                print(f"Warning: Failed to encrypt secret {name}: {e}. Storing as plain text.")
+
         try:
             # Write to DynamoDB (new primary storage)
             self.dynamodb.put_item(
                 TableName=self.dynamodb_table,
                 Item={
                     'secret_key': {'S': full_name},
-                    'secret_value': {'S': secret_value},
+                    'secret_value': {'S': encrypted_value},
                     'project_id': {'S': project_id},
                     'stage': {'S': stage},
-                    'created_at': {'S': '2025-11-03T06:45:00Z'}
+                    'created_at': {'S': '2025-11-03T06:45:00Z'},
+                    'encrypted': {'BOOL': is_encrypted}
                 }
             )
 
@@ -78,6 +112,15 @@ class SecretsManager:
 
             if 'Item' in response:
                 secret_value = response['Item'].get('secret_value', {}).get('S')
+                is_encrypted = response['Item'].get('encrypted', {}).get('BOOL', False)
+
+                # Decrypt if encrypted
+                if is_encrypted and self.encryption:
+                    try:
+                        secret_value = self.encryption.decrypt(secret_value)
+                    except (InvalidToken, Exception) as e:
+                        print(f"Warning: Failed to decrypt secret {secret_id}: {e}")
+                        return None
 
                 full_key = secret_id
                 if "@" in full_key:
@@ -111,13 +154,26 @@ class SecretsManager:
             raise e
 
     def update_secret(self, secret_id: str, secret_value: str) -> dict:
+        # Encrypt secret value if encryption is available
+        encrypted_value = secret_value
+        is_encrypted = False
+        if self.encryption:
+            try:
+                encrypted_value = self.encryption.encrypt(secret_value)
+                is_encrypted = True
+            except Exception as e:
+                print(f"Warning: Failed to encrypt secret {secret_id}: {e}. Storing as plain text.")
+
         try:
             # Update in DynamoDB
             self.dynamodb.update_item(
                 TableName=self.dynamodb_table,
                 Key={'secret_key': {'S': secret_id}},
-                UpdateExpression='SET secret_value = :val',
-                ExpressionAttributeValues={':val': {'S': secret_value}}
+                UpdateExpression='SET secret_value = :val, encrypted = :enc',
+                ExpressionAttributeValues={
+                    ':val': {'S': encrypted_value},
+                    ':enc': {'BOOL': is_encrypted}
+                }
             )
 
             return {

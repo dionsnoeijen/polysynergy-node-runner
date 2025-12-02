@@ -1,4 +1,4 @@
-MAX_PREVIEW_SIZE = 16384
+MAX_PREVIEW_SIZE = 16384 * 4 # 64KB
 
 def truncate_large_values(obj):
     if isinstance(obj, dict):

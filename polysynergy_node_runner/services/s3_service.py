@@ -21,20 +21,29 @@ class S3Service:
         self.public = public
         self.region = region or os.getenv("AWS_REGION", "eu-central-1")
 
+        # Check for local S3 endpoint (MinIO)
+        local_endpoint = os.getenv("S3_LOCAL_ENDPOINT")
+        self.local_endpoint = local_endpoint
+
         execution_env = os.getenv("AWS_EXECUTION_ENV", "")
         is_lambda = execution_env.lower().startswith("aws_lambda")
         is_explicit = bool(access_key and secret_key and not is_lambda)
 
-        if is_explicit:
-            self.s3_client = boto3.client(
-                "s3",
-                region_name=self.region,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-                aws_session_token=os.getenv("AWS_SESSION_TOKEN")
-            )
-        else:
-            self.s3_client = boto3.client("s3", region_name=self.region)
+        # Build S3 client config
+        s3_config = {"region_name": self.region}
+
+        # Use local endpoint if configured (MinIO)
+        if local_endpoint:
+            s3_config["endpoint_url"] = local_endpoint
+            s3_config["aws_access_key_id"] = os.getenv("S3_ACCESS_KEY", "minioadmin")
+            s3_config["aws_secret_access_key"] = os.getenv("S3_SECRET_KEY", "minioadmin")
+            logger.info(f"Using local S3 endpoint: {local_endpoint}")
+        elif is_explicit:
+            s3_config["aws_access_key_id"] = access_key
+            s3_config["aws_secret_access_key"] = secret_key
+            s3_config["aws_session_token"] = os.getenv("AWS_SESSION_TOKEN")
+
+        self.s3_client = boto3.client("s3", **s3_config)
 
         scope = "public" if public else "private"
         self.bucket_name = f"ps-{scope}-files-{tenant_id}".lower()
@@ -52,15 +61,26 @@ class S3Service:
     def _create_bucket(self, bucket_name):
         logger.info(f"Creating bucket: {bucket_name}")
         try:
-            self.s3_client.create_bucket(
-                Bucket=bucket_name,
-                CreateBucketConfiguration={"LocationConstraint": self.region}
-            )
+            # Check if using local endpoint (MinIO)
+            local_endpoint = os.getenv("S3_LOCAL_ENDPOINT")
+
+            if local_endpoint:
+                # MinIO doesn't need LocationConstraint
+                self.s3_client.create_bucket(Bucket=bucket_name)
+            else:
+                # AWS S3 requires LocationConstraint for non-us-east-1 regions
+                self.s3_client.create_bucket(
+                    Bucket=bucket_name,
+                    CreateBucketConfiguration={"LocationConstraint": self.region}
+                )
+
             logger.info(f"Bucket created: {bucket_name}")
 
             if self.public:
                 # Enable ACLs for public buckets so we can set public-read ACL on objects
-                self._enable_bucket_acls(bucket_name)
+                if not local_endpoint:
+                    # AWS-specific ACL configuration
+                    self._enable_bucket_acls(bucket_name)
                 self._set_public_bucket_policy(bucket_name)
 
         except Exception as e:
@@ -130,18 +150,32 @@ class S3Service:
             content_type, _ = mimetypes.guess_type(file_key)
             extra_args = {'ContentType': content_type or 'application/octet-stream'}
 
+            # Debug logging
+            logger.info(f"Uploading {file_key}: {len(file_obj)} bytes, content_type={content_type}")
+
             # Don't use ACLs - rely on bucket policy for public access
             # This avoids the "AccessControlListNotSupported" error
 
+            file_buffer = io.BytesIO(file_obj)
+            logger.info(f"Created BytesIO buffer, size: {file_buffer.getbuffer().nbytes}")
+
             self.s3_client.upload_fileobj(
-                io.BytesIO(file_obj),
+                file_buffer,
                 self.bucket_name,
                 file_key,
                 ExtraArgs=extra_args
             )
             logger.info(f"Uploaded: {file_key}")
             if self.public:
-                return f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{file_key}"
+                # Use local endpoint URL for MinIO, AWS URL for production
+                if self.local_endpoint:
+                    # MinIO URL format: http://localhost:9000/bucket-name/file-key
+                    # Replace internal docker hostname with localhost for browser access
+                    public_endpoint = self.local_endpoint.replace("minio:", "localhost:")
+                    return f"{public_endpoint}/{self.bucket_name}/{file_key}"
+                else:
+                    # AWS S3 URL format
+                    return f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{file_key}"
             else:
                 return self.get_file_url(file_key)
         except NoCredentialsError:
