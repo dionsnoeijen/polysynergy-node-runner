@@ -2,210 +2,380 @@ import os
 import io
 import json
 import boto3
+import hashlib
 import logging
 import mimetypes
-from botocore.exceptions import NoCredentialsError, ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
+from typing import Dict, Any, Optional
+
 
 logger = logging.getLogger(__name__)
 
+
 class S3Service:
+    """Service for uploading files to S3 with project-based bucket isolation"""
+
     def __init__(
         self,
-        tenant_id: str,
-        public: bool = False,
-        access_key: str | None = None,
-        secret_key: str | None = None,
-        region: str | None = None
+        tenant_id: Optional[str] = None,
+        project_id: Optional[str] = None
     ):
-        self.tenant_id = tenant_id
-        self.public = public
-        self.region = region or os.getenv("AWS_REGION", "eu-central-1")
+        """
+        Initialize S3Service.
+
+        Args:
+            tenant_id: Optional tenant ID. If not provided, uses TENANT_ID env var.
+            project_id: Optional project ID. If not provided, uses PROJECT_ID env var.
+        """
+        self.is_lambda = os.getenv("AWS_EXECUTION_ENV") is not None
+        self.region = os.getenv("AWS_REGION", "eu-central-1")
+        self.cdn_domain = os.getenv("CDN_DOMAIN")  # Optional CloudFront domain
+        self.use_signed_urls = os.getenv("USE_SIGNED_URLS", "true").lower() == "true"
+
+        # Store tenant/project IDs (use provided values or fall back to env vars)
+        self._tenant_id = tenant_id or os.getenv('TENANT_ID', 'default')
+        self._project_id = project_id or os.getenv('PROJECT_ID', 'default')
 
         # Check for local S3 endpoint (MinIO)
-        local_endpoint = os.getenv("S3_LOCAL_ENDPOINT")
-        self.local_endpoint = local_endpoint
-
-        execution_env = os.getenv("AWS_EXECUTION_ENV", "")
-        is_lambda = execution_env.lower().startswith("aws_lambda")
-        is_explicit = bool(access_key and secret_key and not is_lambda)
+        self.local_endpoint = os.getenv("S3_LOCAL_ENDPOINT")
 
         # Build S3 client config
         s3_config = {"region_name": self.region}
 
-        # Use local endpoint if configured (MinIO)
-        if local_endpoint:
-            s3_config["endpoint_url"] = local_endpoint
+        if self.local_endpoint:
+            # MinIO / local S3-compatible storage
+            s3_config["endpoint_url"] = self.local_endpoint
             s3_config["aws_access_key_id"] = os.getenv("S3_ACCESS_KEY", "minioadmin")
             s3_config["aws_secret_access_key"] = os.getenv("S3_SECRET_KEY", "minioadmin")
-            logger.info(f"Using local S3 endpoint: {local_endpoint}")
-        elif is_explicit:
-            s3_config["aws_access_key_id"] = access_key
-            s3_config["aws_secret_access_key"] = secret_key
-            s3_config["aws_session_token"] = os.getenv("AWS_SESSION_TOKEN")
+            logger.info(f"Using local S3 endpoint: {self.local_endpoint}")
+        elif self.is_lambda:
+            # In Lambda, use IAM role (no explicit credentials needed)
+            pass
+        else:
+            # Local development with AWS
+            s3_config["aws_access_key_id"] = os.getenv("AWS_ACCESS_KEY_ID")
+            s3_config["aws_secret_access_key"] = os.getenv("AWS_SECRET_ACCESS_KEY")
 
         self.s3_client = boto3.client("s3", **s3_config)
 
-        scope = "public" if public else "private"
-        self.bucket_name = f"ps-{scope}-files-{tenant_id}".lower()
+    def get_bucket_name(self) -> str:
+        """Get bucket name based on tenant and project ID"""
+        tenant_id = self._tenant_id
+        project_id = self._project_id
 
-        if not self._bucket_exists(self.bucket_name):
-            self._create_bucket(self.bucket_name)
+        # For long tenant/project IDs (UUIDs), create shortened versions using hash
+        # This ensures bucket names stay within S3 limits (63 chars) and remain unique
+        if len(tenant_id) > 8:
+            tenant_short = hashlib.md5(tenant_id.encode()).hexdigest()[:8]
+        else:
+            tenant_short = tenant_id
 
-    def _bucket_exists(self, bucket_name):
+        if len(project_id) > 8:
+            project_short = hashlib.md5(project_id.encode()).hexdigest()[:8]
+        else:
+            project_short = project_id
+
+        # Bucket naming pattern: polysynergy-{tenant_hash}-{project_hash}-media
+        # This keeps bucket names under 63 characters while maintaining uniqueness
+        bucket_name = f"polysynergy-{tenant_short}-{project_short}-media".lower()
+
+        # Ensure bucket name is valid (lowercase, no underscores)
+        bucket_name = bucket_name.replace('_', '-')
+
+        # Final safety check - should never exceed 63 chars with our hash approach
+        if len(bucket_name) > 63:
+            # Emergency fallback: use shorter hashes
+            tenant_short = hashlib.md5(tenant_id.encode()).hexdigest()[:6]
+            project_short = hashlib.md5(project_id.encode()).hexdigest()[:6]
+            bucket_name = f"poly-{tenant_short}-{project_short}-media".lower()
+
+        return bucket_name
+
+    def ensure_bucket_exists(self, bucket_name: str) -> bool:
+        """Ensure the bucket exists, create if it doesn't"""
         try:
             self.s3_client.head_bucket(Bucket=bucket_name)
+            # Bucket exists - only try to set public policy if signed URLs are disabled
+            if not self.use_signed_urls:
+                self._set_bucket_public_read_policy(bucket_name)
             return True
-        except ClientError:
-            return False
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == '404':
+                # Bucket doesn't exist, try to create it
+                return self._create_bucket(bucket_name)
+            else:
+                logger.error(f"Error checking bucket {bucket_name}: {e}")
+                return False
 
-    def _create_bucket(self, bucket_name):
-        logger.info(f"Creating bucket: {bucket_name}")
+    def _create_bucket(self, bucket_name: str) -> bool:
+        """Create a new bucket with proper configuration"""
         try:
-            # Check if using local endpoint (MinIO)
-            local_endpoint = os.getenv("S3_LOCAL_ENDPOINT")
-
-            if local_endpoint:
+            if self.local_endpoint:
                 # MinIO doesn't need LocationConstraint
                 self.s3_client.create_bucket(Bucket=bucket_name)
+            elif self.region == 'us-east-1':
+                self.s3_client.create_bucket(Bucket=bucket_name)
             else:
-                # AWS S3 requires LocationConstraint for non-us-east-1 regions
                 self.s3_client.create_bucket(
                     Bucket=bucket_name,
-                    CreateBucketConfiguration={"LocationConstraint": self.region}
+                    CreateBucketConfiguration={'LocationConstraint': self.region}
                 )
 
             logger.info(f"Bucket created: {bucket_name}")
 
-            if self.public:
-                # Enable ACLs for public buckets so we can set public-read ACL on objects
-                if not local_endpoint:
-                    # AWS-specific ACL configuration
-                    self._enable_bucket_acls(bucket_name)
-                self._set_public_bucket_policy(bucket_name)
+            # Set CORS for all buckets
+            self._set_bucket_cors(bucket_name)
 
-        except Exception as e:
-            logger.error(f"Failed to create bucket {bucket_name}: {e}")
-            raise
+            # Only set public access policy if signed URLs are disabled
+            if not self.use_signed_urls:
+                self._set_bucket_public_read_policy(bucket_name)
 
-    def _enable_bucket_acls(self, bucket_name):
-        """Enable ACLs for the bucket so we can set public-read ACL on objects"""
+            return True
+        except ClientError as create_error:
+            logger.error(f"Failed to create bucket {bucket_name}: {create_error}")
+            return False
+
+    def _set_bucket_cors(self, bucket_name: str):
+        """Set CORS configuration for the bucket"""
+        cors_configuration = {
+            'CORSRules': [{
+                'AllowedHeaders': ['*'],
+                'AllowedMethods': ['GET', 'HEAD', 'POST', 'PUT'],
+                'AllowedOrigins': ['*'],
+                'ExposeHeaders': ['ETag'],
+                'MaxAgeSeconds': 3000
+            }]
+        }
+
         try:
-            # Set bucket ownership to allow ACLs
-            self.s3_client.put_bucket_ownership_controls(
+            self.s3_client.put_bucket_cors(
                 Bucket=bucket_name,
-                OwnershipControls={
-                    'Rules': [
-                        {
-                            'ObjectOwnership': 'BucketOwnerPreferred'
-                        }
-                    ]
-                }
+                CORSConfiguration=cors_configuration
             )
-            logger.info(f"Bucket ownership configured for ACLs: {bucket_name}")
-        except Exception as e:
-            logger.error(f"Failed to configure bucket ownership for {bucket_name}: {e}")
-            # Don't raise - try to continue with bucket policy approach
+        except ClientError as e:
+            logger.warning(f"Failed to set CORS for bucket {bucket_name}: {e}")
 
-    def _set_public_bucket_policy(self, bucket_name):
+    def _set_bucket_public_read_policy(self, bucket_name: str):
+        """Set bucket policy to allow public read access"""
+        # Skip for MinIO in local development - not always needed
+        if self.local_endpoint:
+            return
+
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "PublicReadGetObject",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:GetObject",
+                    "Resource": f"arn:aws:s3:::{bucket_name}/*"
+                }
+            ]
+        }
+
         try:
-            # First, disable Block Public Access for this bucket
-            try:
-                self.s3_client.put_public_access_block(
-                    Bucket=bucket_name,
-                    PublicAccessBlockConfiguration={
-                        'BlockPublicAcls': False,
-                        'IgnorePublicAcls': False,
-                        'BlockPublicPolicy': False,
-                        'RestrictPublicBuckets': False
-                    }
-                )
-                logger.info(f"Disabled Block Public Access for: {bucket_name}")
-            except Exception as block_error:
-                logger.error(f"Failed to disable Block Public Access for {bucket_name}: {block_error}")
-
-            # Set the bucket policy for public read access
-            policy = {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Sid": "AllowPublicReadAccess",
-                        "Effect": "Allow",
-                        "Principal": "*",
-                        "Action": "s3:GetObject",
-                        "Resource": f"arn:aws:s3:::{bucket_name}/*"
-                    }
-                ]
-            }
             self.s3_client.put_bucket_policy(
                 Bucket=bucket_name,
                 Policy=json.dumps(policy)
             )
-            logger.info(f"Public bucket policy set for: {bucket_name}")
-        except Exception as e:
-            logger.error(f"Failed to set public bucket policy: {e}")
-            raise  # This is critical for public buckets
-
-    def upload_file(self, file_obj: bytes, file_key: str) -> str | None:
-        try:
-            content_type, _ = mimetypes.guess_type(file_key)
-            extra_args = {'ContentType': content_type or 'application/octet-stream'}
-
-            # Debug logging
-            logger.info(f"Uploading {file_key}: {len(file_obj)} bytes, content_type={content_type}")
-
-            # Don't use ACLs - rely on bucket policy for public access
-            # This avoids the "AccessControlListNotSupported" error
-
-            file_buffer = io.BytesIO(file_obj)
-            logger.info(f"Created BytesIO buffer, size: {file_buffer.getbuffer().nbytes}")
-
-            self.s3_client.upload_fileobj(
-                file_buffer,
-                self.bucket_name,
-                file_key,
-                ExtraArgs=extra_args
-            )
-            logger.info(f"Uploaded: {file_key}")
-            if self.public:
-                # Use local endpoint URL for MinIO, AWS URL for production
-                if self.local_endpoint:
-                    # MinIO URL format: http://localhost:9000/bucket-name/file-key
-                    # Replace internal docker hostname with localhost for browser access
-                    public_endpoint = self.local_endpoint.replace("minio:", "localhost:")
-                    return f"{public_endpoint}/{self.bucket_name}/{file_key}"
-                else:
-                    # AWS S3 URL format
-                    return f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{file_key}"
+            logger.info(f"Successfully set public read policy for bucket {bucket_name}")
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            # Don't fail the entire operation if public access is blocked
+            if error_code == 'AccessDenied' and 'BlockPublicPolicy' in str(e):
+                logger.info(f"Note: Public bucket policy blocked for {bucket_name} - using signed URLs instead")
             else:
-                return self.get_file_url(file_key)
-        except NoCredentialsError:
-            logger.error("No valid AWS credentials found.")
-            return None
-        except Exception as e:
-            logger.error(f"Upload error: {e}")
+                logger.warning(f"Failed to set public read policy for bucket {bucket_name}: {e}")
+            # Continue execution - signed URLs will be used as fallback
+
+    def upload_file(
+        self,
+        file_data: bytes,
+        key: str,
+        content_type: str = 'application/octet-stream',
+        metadata: Optional[Dict[str, str]] = None,
+        cache_control: str = 'public, max-age=31536000'  # 1 year cache
+    ) -> Dict[str, Any]:
+        """Upload file to S3 and return the URL"""
+
+        bucket_name = self.get_bucket_name()
+
+        # Ensure bucket exists
+        if not self.ensure_bucket_exists(bucket_name):
+            return {
+                'success': False,
+                'error': f'Failed to ensure bucket {bucket_name} exists'
+            }
+
+        try:
+            # Prepare upload parameters
+            upload_params = {
+                'Bucket': bucket_name,
+                'Key': key,
+                'Body': file_data,
+                'ContentType': content_type,
+                'CacheControl': cache_control
+            }
+
+            # Add metadata if provided
+            if metadata:
+                upload_params['Metadata'] = metadata
+
+            # Upload the file
+            response = self.s3_client.put_object(**upload_params)
+
+            # Generate URL based on configuration
+            url = self._generate_url(bucket_name, key)
+
+            return {
+                'success': True,
+                'url': url,
+                'bucket': bucket_name,
+                'key': key,
+                'etag': response.get('ETag', '').strip('"'),
+                'version_id': response.get('VersionId')
+            }
+
+        except ClientError as e:
+            logger.error(f"Failed to upload {key}: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _generate_url(self, bucket_name: str, key: str) -> str:
+        """Generate the appropriate URL for accessing a file"""
+        if self.cdn_domain:
+            # Use CloudFront CDN if available
+            return f"https://{self.cdn_domain}/{key}"
+        elif self.local_endpoint:
+            # MinIO URL - replace internal docker hostname with localhost for browser access
+            public_endpoint = self.local_endpoint.replace("minio:", "localhost:")
+            return f"{public_endpoint}/{bucket_name}/{key}"
+        elif self.use_signed_urls:
+            # Generate pre-signed URL for private bucket access
+            url = self.get_signed_url(key, expiration=86400)  # 24 hours
+            if url:
+                return url
+            # Fallback to direct URL
+            return f"https://{bucket_name}.s3.{self.region}.amazonaws.com/{key}"
+        else:
+            # Use direct S3 URL (requires public bucket)
+            return f"https://{bucket_name}.s3.{self.region}.amazonaws.com/{key}"
+
+    def delete_file(self, key: str) -> bool:
+        """Delete a file from S3"""
+        bucket_name = self.get_bucket_name()
+
+        try:
+            self.s3_client.delete_object(Bucket=bucket_name, Key=key)
+            return True
+        except ClientError as e:
+            logger.error(f"Failed to delete {key} from {bucket_name}: {e}")
+            return False
+
+    def get_signed_url(self, key: str, expiration: int = 3600) -> Optional[str]:
+        """Generate a pre-signed URL for temporary access"""
+        bucket_name = self.get_bucket_name()
+
+        try:
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': key},
+                ExpiresIn=expiration
+            )
+            return url
+        except ClientError as e:
+            logger.error(f"Failed to generate signed URL for {key}: {e}")
             return None
 
-    def get_file_url(self, file_key: str) -> str | None:
+    def refresh_signed_url(self, key: str, expiration: int = 86400) -> Optional[str]:
+        """Generate a fresh pre-signed URL for an existing file"""
+        return self.get_signed_url(key, expiration)
+
+    def get_file_metadata(self, key: str) -> Dict[str, Any]:
+        """Get metadata for a file from S3"""
+        bucket_name = self.get_bucket_name()
+
         try:
-            return self.s3_client.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': self.bucket_name, 'Key': file_key},
-                ExpiresIn=3600
-            )
-        except Exception as e:
-            logger.error(f"URL generation error: {e}")
-            return None
+            response = self.s3_client.head_object(Bucket=bucket_name, Key=key)
+            return {
+                'success': True,
+                'metadata': response.get('Metadata', {}),
+                'size': response.get('ContentLength', 0),
+                'last_modified': response.get('LastModified'),
+                'etag': response.get('ETag', '').strip('"'),
+                'content_type': response.get('ContentType', 'unknown')
+            }
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return {'success': False, 'error': 'File not found'}
+            else:
+                return {'success': False, 'error': str(e)}
+
+    def get_file_url(self, key: str) -> str:
+        """Get the URL for a file"""
+        bucket_name = self.get_bucket_name()
+        return self._generate_url(bucket_name, key)
 
     def list_files(self, prefix: str = "") -> list[str]:
+        """List files in the bucket with optional prefix filter"""
+        bucket_name = self.get_bucket_name()
+
         try:
-            response = self.s3_client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
+            response = self.s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
             return [item['Key'] for item in response.get('Contents', [])]
-        except Exception as e:
+        except ClientError as e:
             logger.error(f"Error listing files: {e}")
             return []
 
-def get_s3_service(tenant_id: str, public: bool = False) -> S3Service:
-    return S3Service(tenant_id, public=public)
 
-def get_s3_service_from_env(tenant_id: str, access_key: str, secret_key: str, region: str, public: bool = False) -> S3Service:
-    return S3Service(tenant_id, public=public, access_key=access_key, secret_key=secret_key, region=region)
+    def upload_file_simple(self, file_data: bytes, key: str) -> Optional[str]:
+        """
+        Simple upload that returns just the URL (for backwards compatibility).
+
+        Args:
+            file_data: File content as bytes
+            key: S3 key/path for the file
+
+        Returns:
+            URL string on success, None on failure
+        """
+        content_type, _ = mimetypes.guess_type(key)
+        result = self.upload_file(
+            file_data=file_data,
+            key=key,
+            content_type=content_type or 'application/octet-stream'
+        )
+        if result.get('success'):
+            return result.get('url')
+        return None
+
+    # Backwards compatibility alias for upload_image
+    def upload_image(
+        self,
+        image_data: bytes,
+        key: str,
+        content_type: str = 'image/png',
+        metadata: Optional[Dict[str, str]] = None,
+        cache_control: str = 'public, max-age=31536000'
+    ) -> Dict[str, Any]:
+        """Alias for upload_file - backwards compatibility with S3ImageService"""
+        return self.upload_file(
+            file_data=image_data,
+            key=key,
+            content_type=content_type,
+            metadata=metadata,
+            cache_control=cache_control
+        )
+
+
+# Backwards compatibility aliases
+S3ImageService = S3Service
+
+
+def get_s3_service() -> S3Service:
+    """Get an S3Service instance"""
+    return S3Service()
