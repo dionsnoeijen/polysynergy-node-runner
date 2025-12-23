@@ -44,7 +44,9 @@ def build_group_nodes_code(conns_data: list, groups_with_output: set) -> str:
                 current_index += 1
 
             prefix = prefix_map[src_id]
-            prop_name = f"{prefix}_{src_handle}"
+            # Replace dots with underscores to create valid Python property names
+            sanitized_handle = src_handle.replace(".", "_")
+            prop_name = f"{prefix}_{sanitized_handle}"
             properties.append(prop_name)
             group_lines.append(f"    {prop_name} = None  # from targetHandle {tgt_handle}")
 

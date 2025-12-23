@@ -31,7 +31,9 @@ def rewrite_connections_for_groups(conns_data: list) -> None:
                 current_index += 1
 
             prefix = prefix_map[source_id]
-            new_handle = f"{prefix}_{source_handle}"
+            # Replace dots with underscores to create valid Python property names
+            sanitized_handle = source_handle.replace(".", "_")
+            new_handle = f"{prefix}_{sanitized_handle}"
             target_map[target_handle] = new_handle
 
         group_prefix_map[group_id] = prefix_map
@@ -57,4 +59,6 @@ def rewrite_connections_for_groups(conns_data: list) -> None:
             if group_id in group_prefix_map and source_id in group_prefix_map[group_id]:
                 prefix = group_prefix_map[group_id][source_id]
                 conn["sourceNodeId"] = group_id
-                conn["sourceHandle"] = f"{prefix}_{source_handle}"
+                # Replace dots with underscores to create valid Python property names
+                sanitized_handle = source_handle.replace(".", "_")
+                conn["sourceHandle"] = f"{prefix}_{sanitized_handle}"

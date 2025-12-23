@@ -86,6 +86,72 @@ def dock_text_area(enabled: bool = True, rich: bool = False, info: str = ""):
         "info": info,
     }
 
+def dock_layout_editor(enabled: bool = True, info: str = ""):
+    return {
+        "has_dock": True,
+        "enabled": enabled,
+        "layout_editor": True,
+        "info": info,
+    }
+
+
+def dock_table_editor(enabled: bool = True, info: str = ""):
+    return {
+        "has_dock": True,
+        "enabled": enabled,
+        "table_editor": True,
+        "info": info,
+    }
+
+
+def dock_spa_editor(enabled: bool = True, info: str = ""):
+    return {
+        "has_dock": True,
+        "enabled": enabled,
+        "spa_editor": True,
+        "info": info,
+    }
+
+
+def dock_components(enabled: bool = True, info: str = ""):
+    """
+    Dock for connecting component nodes (tables, charts, forms).
+    Only shows key field, input is always on, accepts ServiceNode type.
+    """
+    return {
+        "has_dock": True,
+        "enabled": enabled,
+        "key_label": "Handle",
+        "value_label": "",
+        "type_label": "",
+        "type_field": False,
+        "in_switch": True,
+        "in_switch_default": True,
+        "in_switch_enabled": False,  # Can't turn off input
+        "in_type_override": "polysynergy_nodes.layout.component_node.ComponentNode",
+        "out_switch": False,
+        "out_switch_default": False,
+        "out_switch_enabled": False,
+        "key_field": True,
+        "value_field": False,
+        "info": info,
+        "metadata": {},
+    }
+
+
+def dock_iframe_viewer(enabled: bool = True, info: str = ""):
+    """
+    Dock for displaying an iframe with a URL.
+    Shows URL input and renders the page in an iframe.
+    """
+    return {
+        "has_dock": True,
+        "enabled": enabled,
+        "iframe_viewer": True,
+        "info": info,
+    }
+
+
 def dock_dict(
     enabled: bool = True,
     key_label: str = "Key",

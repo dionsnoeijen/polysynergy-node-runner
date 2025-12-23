@@ -1,6 +1,44 @@
 import copy
+import logging
+import os
+from importlib import import_module
+from pathlib import Path
 
 from polysynergy_node_runner.services.codegen.steps.build_connections_code import build_connections_code
+
+logger = logging.getLogger(__name__)
+
+
+def _load_node_class_for_hook(node_path: str):
+    """
+    Load a node class to call its before_codegen hook.
+
+    Args:
+        node_path: Full path like 'polysynergy_nodes.spa.spa.Spa'
+
+    Returns:
+        Node class or None if not loadable
+    """
+    if not node_path:
+        return None
+
+    try:
+        # Extract module path and class name
+        parts = node_path.split(".")
+        class_name = parts[-1]
+        module_path = ".".join(parts[:-1])
+
+        # Try to import the module
+        module = import_module(module_path)
+        node_class = getattr(module, class_name, None)
+
+        return node_class
+
+    except Exception as e:
+        logger.debug(f"Could not load node class for hook: {node_path}: {e}")
+        return None
+
+
 from polysynergy_node_runner.services.codegen.steps.build_group_nodes_code import build_group_nodes_code
 from polysynergy_node_runner.services.codegen.steps.build_nodes_code import build_nodes_code, discover_node_code
 from polysynergy_node_runner.services.codegen.steps.find_groups_with_output import find_groups_with_output
@@ -30,6 +68,7 @@ from polysynergy_node_runner.services.env_var_manager import get_env_var_manager
 from polysynergy_node_runner.services.execution_storage_service import DynamoDbExecutionStorageService, get_execution_storage_service
 from polysynergy_node_runner.execution_context.send_flow_event import send_flow_event
 from polysynergy_node_runner.services.secrets_manager import get_secrets_manager
+from polysynergy_node_runner.execution_context.replace_placeholders import set_project_templates
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -49,10 +88,26 @@ flow = Flow(connections, state, execution_flow)
 """
 
 
-def generate_code_from_json(json_data, id):
+def generate_code_from_json(json_data, id, templates: dict = None):
+    """
+    Generate executable Python code from node setup JSON.
+
+    Args:
+        json_data: The node setup JSON containing nodes and connections
+        id: The version ID for this node setup
+        templates: Optional dict of project templates {name: content} for Jinja extends
+    """
     json_data = copy.deepcopy(json_data)
     nodes_data = json_data.get("nodes", [])
     conns_data = json_data.get("connections", [])
+
+    # Debug logging for code generation
+    print(f"[CODEGEN] Version ID: {id}")
+    print(f"[CODEGEN] Nodes in JSON: {len(nodes_data)}")
+    print(f"[CODEGEN] Node paths: {[n.get('path', n.get('type', 'unknown')) for n in nodes_data]}")
+    print(f"[CODEGEN] Connections in JSON: {len(conns_data)}")
+    if conns_data:
+        print(f"[CODEGEN] Connection pairs: {[(c.get('sourceNodeId', '')[:8], c.get('targetNodeId', '')[:8]) for c in conns_data[:10]]}")
 
     groups_with_output = find_groups_with_output(conns_data)
 
@@ -73,6 +128,19 @@ def generate_code_from_json(json_data, id):
             cleaned = unify_node_code(code, collected_imports, version)
             path_version_map[version_key] = cleaned
 
+    # Run before_codegen hooks for each node
+    for nd in nodes_data:
+        if nd.get("type") in ["group", "warp_gate"]:
+            continue
+        node_class = _load_node_class_for_hook(nd.get('path'))
+        if node_class and hasattr(node_class, 'before_codegen'):
+            try:
+                result = node_class.before_codegen(nd, nodes_data, conns_data)
+                if result and isinstance(result, dict):
+                    nd.update(result)
+            except Exception as e:
+                logger.warning(f"before_codegen hook failed for {nd.get('path')}: {e}")
+
     # Separate __future__ imports from other imports
     future_imports = {imp for imp in collected_imports if imp.startswith("from __future__")}
     other_imports = collected_imports - future_imports
@@ -90,6 +158,12 @@ def generate_code_from_json(json_data, id):
         code_parts.append(HEADER)
 
     code_parts.append(f"NODE_SETUP_VERSION_ID = \"{str(id)}\"")
+
+    # Add project templates for Jinja extends support
+    if templates:
+        # Escape the templates dict as a Python literal
+        templates_repr = repr(templates)
+        code_parts.append(f"\n# Project base templates for Jinja extends\nset_project_templates({templates_repr})\n")
 
     # Add remaining imports
     if other_imports:
@@ -136,7 +210,7 @@ def generate_code_from_json(json_data, id):
     code_parts.append("        state.connections = connections")
     code_parts.append(build_nodes_code(nodes_data, groups_with_output))
     code_parts.append("        return flow, execution_flow, state")
-    code_parts.append("""\nasync def execute_with_mock_start_node(node_id:str, run_id:str, sub_stage:str):
+    code_parts.append("""\nasync def execute_with_mock_start_node(node_id:str, run_id:str, sub_stage:str, input_data:dict=None):
 
     node_id = str(node_id)
 
@@ -148,10 +222,46 @@ def generate_code_from_json(json_data, id):
         trigger_node_id=node_id
     )
 
-    
+    # Apply input_data to nodes if provided (e.g., chat message)
+    if input_data:
+        state.input_data = input_data
+
     node = state.get_node_by_id(str(node_id))
     if node is None:
         raise ValueError(f"Node ID {node_id} not found.")
+
+    # If we have input_data with a message (e.g., embedded chat), inject it into the Prompt node
+    if input_data and input_data.get('message'):
+        print(f"[EXECUTE] Looking for Prompt node to inject message: {input_data['message'][:50]}...")
+        print(f"[EXECUTE] Available nodes: {[(n.id, n.path) for n in state.nodes]}")
+        prompt_found = False
+        target_prompt_id = input_data.get('prompt_node_id')
+
+        if target_prompt_id:
+            # Target a specific prompt node by ID
+            print(f"[EXECUTE] Targeting specific prompt node: {target_prompt_id}")
+            target_node = state.get_node_by_id(target_prompt_id)
+            if target_node and target_node.path == 'polysynergy_nodes.play.prompt.Prompt':
+                target_node.prompt = input_data['message']
+                print(f"[EXECUTE] Injected prompt into specific Prompt node {target_node.id}")
+                if input_data.get('session_id'):
+                    target_node.active_session = input_data['session_id']
+                prompt_found = True
+            else:
+                print(f"[EXECUTE] WARNING: Target prompt node {target_prompt_id} not found or not a Prompt node!")
+
+        # Fallback: find first Prompt node if no specific target or target not found
+        if not prompt_found:
+            for n in state.nodes:
+                if n.path == 'polysynergy_nodes.play.prompt.Prompt':
+                    n.prompt = input_data['message']
+                    print(f"[EXECUTE] Injected prompt into Prompt node {n.id}")
+                    if input_data.get('session_id'):
+                        n.active_session = input_data['session_id']
+                    prompt_found = True
+                    break
+        if not prompt_found:
+            print(f"[EXECUTE] WARNING: No Prompt node found in workflow!")
 
     await flow.execute_node(node)
     storage.store_connections_result(
@@ -379,6 +489,7 @@ def lambda_handler(event, context):
     stage = event.get("stage", "mock")
     sub_stage = event.get("sub_stage", "mock")
     node_id = event.get("node_id")
+    input_data = event.get("input_data")  # For embedded chat, etc.
 
     # Use provided run_id from API if available, otherwise generate new one
     run_id = event.get("run_id")
@@ -435,7 +546,7 @@ def lambda_handler(event, context):
                     None,
                     'run_start'
                 )
-            execution_flow = asyncio.run(execute_with_mock_start_node(node_id, run_id, sub_stage))
+            execution_flow = asyncio.run(execute_with_mock_start_node(node_id, run_id, sub_stage, input_data))
             if has_listener:
                 send_flow_event(
                     NODE_SETUP_VERSION_ID,

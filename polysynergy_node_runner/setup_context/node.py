@@ -85,6 +85,22 @@ class Node:
     def _get_declaring_file(self):
         return self._file_resolver.get_declaring_file()
 
+    @classmethod
+    def before_codegen(cls, node_data: dict, all_nodes: list, connections: list) -> dict:
+        """
+        Hook called during codegen, before code generation.
+        Nodes can override this to transform data or add pre-computed attributes.
+
+        Args:
+            node_data: The node configuration dict (can be modified)
+            all_nodes: All nodes in the setup (read-only)
+            connections: All connections (read-only)
+
+        Returns:
+            node_data dict (original or modified)
+        """
+        return node_data
+
     def to_dict(self):
         node_structure = {
             "handle": self.handle,

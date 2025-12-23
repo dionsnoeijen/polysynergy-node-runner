@@ -95,8 +95,9 @@ class S3Service:
         """Ensure the bucket exists, create if it doesn't"""
         try:
             self.s3_client.head_bucket(Bucket=bucket_name)
-            # Bucket exists - only try to set public policy if signed URLs are disabled
-            if not self.use_signed_urls:
+            # Bucket exists - set public policy if signed URLs are disabled OR using local endpoint
+            # (MinIO uses direct URLs, not signed URLs, so needs public access)
+            if not self.use_signed_urls or self.local_endpoint:
                 self._set_bucket_public_read_policy(bucket_name)
             return True
         except ClientError as e:
@@ -127,8 +128,9 @@ class S3Service:
             # Set CORS for all buckets
             self._set_bucket_cors(bucket_name)
 
-            # Only set public access policy if signed URLs are disabled
-            if not self.use_signed_urls:
+            # Set public access policy if signed URLs are disabled OR using local endpoint
+            # (MinIO uses direct URLs, not signed URLs, so needs public access)
+            if not self.use_signed_urls or self.local_endpoint:
                 self._set_bucket_public_read_policy(bucket_name)
 
             return True
@@ -158,10 +160,6 @@ class S3Service:
 
     def _set_bucket_public_read_policy(self, bucket_name: str):
         """Set bucket policy to allow public read access"""
-        # Skip for MinIO in local development - not always needed
-        if self.local_endpoint:
-            return
-
         policy = {
             "Version": "2012-10-17",
             "Statement": [

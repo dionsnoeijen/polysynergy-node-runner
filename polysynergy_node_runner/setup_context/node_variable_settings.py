@@ -20,6 +20,7 @@ class NodeVariableSettings:
         group: str | None = None,
         metadata: dict | None = None,
         type: str | None = None,
+        skip_template: bool = False,  # Skip Jinja2 template processing
     ):
         self.label = label
         self.default = default
@@ -39,6 +40,7 @@ class NodeVariableSettings:
         self.group = group
         self.metadata = metadata or {}
         self.type = type
+        self.skip_template = skip_template
 
     def __set_name__(self, owner, name):
         self.private_name = "_" + name
@@ -62,6 +64,7 @@ class NodeVariableSettings:
             "group": self.group,
             "metadata": self.metadata,
             "type": self.type,
+            "skip_template": self.skip_template,
         }
 
     def __get__(self, obj, objtype=None):

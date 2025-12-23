@@ -39,14 +39,28 @@ def discover_node_code(node_data: dict) -> str:
                 module_path = ".".join(node_path.split(".")[:-1])
                 file_path = module_path.replace(".", "/") + ".py"
                 
-                # Search in common locations relative to current working directory
-                search_paths = [
-                    Path.cwd().parent / "nodes_agno",     # ../nodes_agno/
-                    Path.cwd().parent / "nodes",          # ../nodes/
-                    Path.cwd().parent,                    # Parent directory
-                    Path.cwd(),                          # Current directory
-                    Path("/app")                         # Docker location
+                # Build search paths dynamically based on NODE_PACKAGES and common locations
+                base_paths = [
+                    Path.cwd().parent,  # Parent directory (development)
+                    Path.cwd(),         # Current directory
+                    Path("/app"),       # Docker /app location
+                    Path("/"),          # Docker root (for /nodes, /nodes_agno, etc.)
                 ]
+
+                # Build search paths: for each base path, add package-specific subdirectories
+                search_paths = []
+                for base in base_paths:
+                    # Add direct base path
+                    search_paths.append(base)
+                    # Add package-specific paths based on NODE_PACKAGES
+                    # e.g., polysynergy_nodes -> nodes, polysynergy_nodes_agno -> nodes_agno
+                    for pkg in node_packages:
+                        if pkg.startswith("polysynergy_"):
+                            # Convert package name to directory name
+                            # polysynergy_nodes -> nodes
+                            # polysynergy_nodes_agno -> nodes_agno
+                            dir_name = pkg.replace("polysynergy_", "")
+                            search_paths.append(base / dir_name)
                 
                 for base_path in search_paths:
                     potential_file = base_path / file_path
@@ -97,6 +111,12 @@ def build_nodes_code(nodes: list, groups_with_output: set):
     lines.append("        else:")
     lines.append("            # No trigger_node_id means register all nodes (backward compatibility)")
     lines.append("            connected_node_ids = None")
+    lines.append("")
+    # Add runtime debug logging
+    lines.append("        # Debug: Show runtime node filtering info")
+    lines.append("        print(f'[RUNTIME] trigger_node_id: {trigger_node_id}')")
+    lines.append("        print(f'[RUNTIME] Total connections built: {len(connections)}')")
+    lines.append("        print(f'[RUNTIME] connected_node_ids: {connected_node_ids}')")
     lines.append("")
 
     for nd in nodes:
@@ -198,6 +218,11 @@ def build_nodes_code(nodes: list, groups_with_output: set):
                 lines.append(f"{var_name}.false_path = {bool(val)}")
             else:
                 lines.append(f"{var_name}.{handle} = {val_repr}")
+
+        # Handle hook-generated attributes (keys starting with underscore)
+        for key, value in nd.items():
+            if key.startswith('_') and not key.startswith('__'):
+                lines.append(f"{var_name}.{key} = {repr(value)}")
 
         lines.append(f"{var_name}.set_driving_connections(get_driving_connections(connections, '{nd['id']}'))")
         lines.append(f"{var_name}.set_in_connections(get_in_connections(connections, '{nd['id']}'))")
