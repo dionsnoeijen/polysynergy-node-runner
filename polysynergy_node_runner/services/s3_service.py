@@ -249,8 +249,8 @@ class S3Service:
             # Use CloudFront CDN if available
             return f"https://{self.cdn_domain}/{key}"
         elif self.local_endpoint:
-            # MinIO URL - replace internal docker hostname with localhost for browser access
-            public_endpoint = self.local_endpoint.replace("minio:", "localhost:")
+            # MinIO URL - use public endpoint if configured, otherwise replace docker hostname
+            public_endpoint = os.getenv("S3_PUBLIC_ENDPOINT") or self.local_endpoint.replace("minio:", "localhost:")
             return f"{public_endpoint}/{bucket_name}/{key}"
         elif self.use_signed_urls:
             # Generate pre-signed URL for private bucket access
