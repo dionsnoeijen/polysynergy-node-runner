@@ -93,8 +93,10 @@ class S3Service:
 
     def ensure_bucket_exists(self, bucket_name: str) -> bool:
         """Ensure the bucket exists, create if it doesn't"""
+        logger.info(f"Checking if bucket exists: {bucket_name}, endpoint: {self.local_endpoint}")
         try:
             self.s3_client.head_bucket(Bucket=bucket_name)
+            logger.info(f"Bucket {bucket_name} exists")
             # Bucket exists - set public policy if signed URLs are disabled OR using local endpoint
             # (MinIO uses direct URLs, not signed URLs, so needs public access)
             if not self.use_signed_urls or self.local_endpoint:
@@ -102,8 +104,10 @@ class S3Service:
             return True
         except ClientError as e:
             error_code = e.response['Error']['Code']
+            logger.info(f"Bucket check error: {error_code} for {bucket_name}")
             if error_code == '404':
                 # Bucket doesn't exist, try to create it
+                logger.info(f"Bucket {bucket_name} does not exist, creating...")
                 return self._create_bucket(bucket_name)
             else:
                 logger.error(f"Error checking bucket {bucket_name}: {e}")
@@ -199,9 +203,11 @@ class S3Service:
         """Upload file to S3 and return the URL"""
 
         bucket_name = self.get_bucket_name()
+        logger.info(f"Uploading file to bucket: {bucket_name}, key: {key}")
 
         # Ensure bucket exists
         if not self.ensure_bucket_exists(bucket_name):
+            logger.error(f"Failed to ensure bucket {bucket_name} exists")
             return {
                 'success': False,
                 'error': f'Failed to ensure bucket {bucket_name} exists'
@@ -251,6 +257,7 @@ class S3Service:
         elif self.local_endpoint:
             # MinIO URL - use public endpoint if configured, otherwise replace docker hostname
             public_endpoint = os.getenv("S3_PUBLIC_ENDPOINT") or self.local_endpoint.replace("minio:", "localhost:")
+            logger.info(f"Using public endpoint: {public_endpoint} (S3_PUBLIC_ENDPOINT env: {os.getenv('S3_PUBLIC_ENDPOINT')})")
             return f"{public_endpoint}/{bucket_name}/{key}"
         elif self.use_signed_urls:
             # Generate pre-signed URL for private bucket access
@@ -341,15 +348,25 @@ class S3Service:
         Returns:
             URL string on success, None on failure
         """
-        content_type, _ = mimetypes.guess_type(key)
-        result = self.upload_file(
-            file_data=file_data,
-            key=key,
-            content_type=content_type or 'application/octet-stream'
-        )
-        if result.get('success'):
-            return result.get('url')
-        return None
+        import traceback
+        try:
+            logger.info(f"upload_file_simple called for key: {key}, data size: {len(file_data)} bytes")
+            content_type, _ = mimetypes.guess_type(key)
+            logger.info(f"Detected content type: {content_type}")
+            result = self.upload_file(
+                file_data=file_data,
+                key=key,
+                content_type=content_type or 'application/octet-stream'
+            )
+            logger.info(f"upload_file result: {result}")
+            if result.get('success'):
+                return result.get('url')
+            logger.error(f"Upload failed: {result.get('error')}")
+            return None
+        except Exception as e:
+            logger.error(f"Exception in upload_file_simple: {e}")
+            logger.error(traceback.format_exc())
+            raise
 
     # Backwards compatibility alias for upload_image
     def upload_image(
