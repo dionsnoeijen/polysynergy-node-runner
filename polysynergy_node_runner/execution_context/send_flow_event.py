@@ -5,6 +5,8 @@ import logging
 import redis
 import redis.asyncio as redis_async
 
+from polysynergy_node_runner.execution_context.context import current_session_id
+
 logger = logging.getLogger(__name__)
 
 _redis = None
@@ -60,9 +62,11 @@ async def send_flow_event_async(
     
     try:
         redis_conn = await get_async_redis()
+        session_id = current_session_id.get()
+        channel = f"execution_updates:{flow_id}:{session_id}" if session_id else f"execution_updates:{flow_id}"
         # Fire and forget - don't await the publish
         asyncio.create_task(
-            redis_conn.publish(f"execution_updates:{flow_id}", json.dumps(message))
+            redis_conn.publish(channel, json.dumps(message))
         )
     except Exception as e:
         logger.warning(f"[Redis] async publish failed (ignored): {e}")
@@ -84,8 +88,14 @@ def send_flow_event(
         'status': status,
     }
 
+    print(f'[SEND_FLOW_EVENT] sync event: {message}')
     try:
         redis_conn = get_redis()
-        redis_conn.publish(f"execution_updates:{flow_id}", json.dumps(message))
+        session_id = current_session_id.get()
+        channel = f"execution_updates:{flow_id}:{session_id}" if session_id else f"execution_updates:{flow_id}"
+        print(f'[SEND_FLOW_EVENT] Publishing to channel: {channel}')
+        result = redis_conn.publish(channel, json.dumps(message))
+        print(f'[SEND_FLOW_EVENT] Published, subscribers: {result}')
     except Exception as e:
+        print(f'[SEND_FLOW_EVENT] FAILED: {e}')
         logger.warning(f"[Redis] publish failed (ignored): {e}")

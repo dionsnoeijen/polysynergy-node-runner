@@ -1,9 +1,15 @@
+import contextvars
+
 from polysynergy_node_runner.execution_context.execution_state import ExecutionState
 from polysynergy_node_runner.execution_context.flow import Flow
 from polysynergy_node_runner.services.active_listeners_service import ActiveListenersService
 from polysynergy_node_runner.services.env_var_manager import EnvVarManager
 from polysynergy_node_runner.services.execution_storage_service import DynamoDbExecutionStorageService
 from polysynergy_node_runner.services.secrets_manager import SecretsManager
+
+current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    'current_session_id', default=None
+)
 
 
 class Context:

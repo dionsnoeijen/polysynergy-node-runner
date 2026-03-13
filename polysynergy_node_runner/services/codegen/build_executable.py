@@ -55,7 +55,7 @@ from typing import get_origin, get_args
 
 from polysynergy_node_runner.execution_context.connection import Connection
 from polysynergy_node_runner.execution_context.connection_context import ConnectionContext
-from polysynergy_node_runner.execution_context.context import Context
+from polysynergy_node_runner.execution_context.context import Context, current_session_id
 from polysynergy_node_runner.execution_context.executable_node import ExecutableNode
 from polysynergy_node_runner.execution_context.execution_state import ExecutionState
 from polysynergy_node_runner.execution_context.flow import Flow
@@ -226,6 +226,19 @@ def generate_code_from_json(json_data, id, templates: dict = None):
     if input_data:
         state.input_data = input_data
 
+    # Set session_id contextvar for Redis channel scoping
+    if input_data and input_data.get('session_id'):
+        current_session_id.set(input_data['session_id'])
+
+    # Populate ChatWindow node with context data
+    if input_data:
+        for n in state.nodes:
+            if n.path == 'polysynergy_nodes.chat_window.chat_window.ChatWindow':
+                n.session_id = input_data.get('session_id', '')
+                n.user_id = input_data.get('user_id', '')
+                n.data = input_data.get('data', {})
+                break
+
     node = state.get_node_by_id(str(node_id))
     if node is None:
         raise ValueError(f"Node ID {node_id} not found.")
@@ -246,6 +259,8 @@ def generate_code_from_json(json_data, id, templates: dict = None):
                 print(f"[EXECUTE] Injected prompt into specific Prompt node {target_node.id}")
                 if input_data.get('session_id'):
                     target_node.active_session = input_data['session_id']
+                if input_data.get('user_id'):
+                    target_node.active_user = input_data['user_id']
                 prompt_found = True
             else:
                 print(f"[EXECUTE] WARNING: Target prompt node {target_prompt_id} not found or not a Prompt node!")
@@ -258,6 +273,8 @@ def generate_code_from_json(json_data, id, templates: dict = None):
                     print(f"[EXECUTE] Injected prompt into Prompt node {n.id}")
                     if input_data.get('session_id'):
                         n.active_session = input_data['session_id']
+                    if input_data.get('user_id'):
+                        n.active_user = input_data['user_id']
                     prompt_found = True
                     break
         if not prompt_found:
@@ -490,6 +507,10 @@ def lambda_handler(event, context):
     sub_stage = event.get("sub_stage", "mock")
     node_id = event.get("node_id")
     input_data = event.get("input_data")  # For embedded chat, etc.
+
+    # Set session_id contextvar for Redis channel scoping
+    if input_data and input_data.get('session_id'):
+        current_session_id.set(input_data['session_id'])
 
     # Use provided run_id from API if available, otherwise generate new one
     run_id = event.get("run_id")

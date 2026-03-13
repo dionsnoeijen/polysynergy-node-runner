@@ -5,6 +5,8 @@ import logging
 import redis
 import redis.asyncio as redis_async
 
+from polysynergy_node_runner.execution_context.context import current_session_id
+
 logger = logging.getLogger(__name__)
 
 _redis = None
@@ -80,6 +82,10 @@ async def send_interaction_event_async(
         if tenant_id:
             channel = f"interaction_events:{tenant_id}:{flow_id}"
 
+        session_id = current_session_id.get()
+        if session_id:
+            channel = f"{channel}:{session_id}"
+
         # Fire and forget - don't await the publish
         asyncio.create_task(
             redis_conn.publish(channel, json.dumps(message))
@@ -117,6 +123,10 @@ def send_interaction_event(
         channel = f"interaction_events:{flow_id}"
         if tenant_id:
             channel = f"interaction_events:{tenant_id}:{flow_id}"
+
+        session_id = current_session_id.get()
+        if session_id:
+            channel = f"{channel}:{session_id}"
 
         redis_conn.publish(channel, json.dumps(message))
     except Exception as e:
