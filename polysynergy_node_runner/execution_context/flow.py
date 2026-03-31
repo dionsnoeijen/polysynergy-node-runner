@@ -24,7 +24,13 @@ class Flow:
             return
 
         if (node.is_driven() or node.has_in_connections()) and not self.all_connections_processed(node):
-            await self.traverse_backward(node)
+            if getattr(node, '_no_backward_traversal', False):
+                # Barrier nodes: only traverse backward when reached via backward traversal
+                # (i.e. NOT found_by any forward connection)
+                if not node._found_by:
+                    await self.traverse_backward(node)
+            else:
+                await self.traverse_backward(node)
 
         if not node.is_processed() and not node.is_killed():
             for conn in node.get_driving_connections():
